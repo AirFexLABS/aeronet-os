@@ -1,0 +1,21 @@
+{
+  "brand": {
+    "name": "AeroNet OS",
+    "logo_path": "/assets/logo.svg",
+    "favicon_path": "/assets/favicon.ico"
+  },
+  "colors": {
+    "--color-primary":        "#0057B8",
+    "--color-secondary":      "#00A3E0",
+    "--color-background":     "#0A0F1E",
+    "--color-surface":        "#111827",
+    "--color-text-primary":   "#F9FAFB",
+    "--color-text-secondary": "#9CA3AF",
+    "--color-alert-critical": "#EF4444",
+    "--color-alert-warning":  "#F59E0B",
+    "--color-alert-info":     "#3B82F6"
+  },
+  "fonts": {
+    "--font-primary": "'Inter', sans-serif"
+  }
+}

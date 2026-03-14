@@ -1,0 +1,167 @@
+{
+  "uid": "aeronet-network-topology",
+  "title": "Network Topology",
+  "tags": ["aeronet", "topology", "network"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-1h", "to": "now" },
+  "editable": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total APs Mapped",
+      "type": "stat",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(DISTINCT ap_serial) AS \"APs\" FROM connectivity_matrix;",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "title": "Unique Switches",
+      "type": "stat",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(DISTINCT switch_hostname) AS \"Switches\" FROM connectivity_matrix;",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "title": "Unmapped APs",
+      "type": "stat",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS \"Unmapped\" FROM devices d LEFT JOIN connectivity_matrix cm ON d.serial_number = cm.ap_serial WHERE d.device_type = 'AP' AND cm.ap_serial IS NULL;",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "title": "AP to Switch Mapping",
+      "type": "table",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 0, "y": 4, "w": 16, "h": 14 },
+      "targets": [
+        {
+          "rawSql": "SELECT cm.ap_serial, d.hostname AS ap_hostname, d.ip_address AS ap_ip, d.site_id, cm.switch_hostname, cm.switch_port, cm.last_updated FROM connectivity_matrix cm JOIN devices d ON cm.ap_serial = d.serial_number ORDER BY d.site_id, cm.switch_hostname, cm.switch_port;",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "last_updated" },
+            "properties": [
+              { "id": "unit", "value": "dateTimeAsIsoNoDateIfToday" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "site_id" },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background-solid"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "title": "APs per Switch",
+      "type": "barchart",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 16, "y": 4, "w": 8, "h": 7 },
+      "targets": [
+        {
+          "rawSql": "SELECT switch_hostname, COUNT(*) AS ap_count FROM connectivity_matrix GROUP BY switch_hostname ORDER BY ap_count DESC;",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "switch_hostname"
+      }
+    },
+    {
+      "id": 6,
+      "title": "APs per Site",
+      "type": "barchart",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 16, "y": 11, "w": 8, "h": 7 },
+      "targets": [
+        {
+          "rawSql": "SELECT d.site_id, COUNT(*) AS ap_count FROM connectivity_matrix cm JOIN devices d ON cm.ap_serial = d.serial_number GROUP BY d.site_id ORDER BY ap_count DESC;",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "site_id"
+      }
+    }
+  ]
+}

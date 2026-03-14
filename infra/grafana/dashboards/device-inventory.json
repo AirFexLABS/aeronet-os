@@ -1,0 +1,206 @@
+{
+  "uid": "aeronet-device-inventory",
+  "title": "Device Inventory & Status",
+  "tags": ["aeronet", "inventory"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "editable": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Devices",
+      "type": "stat",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS \"Total\" FROM devices WHERE status = 'active';",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "title": "Offline Devices",
+      "type": "stat",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS \"Offline\" FROM devices WHERE status = 'offline';",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "title": "Asset Moved Alerts (24h)",
+      "type": "stat",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS \"Moved\" FROM audit_logs WHERE event_type = 'ASSET_MOVED' AND created_at > NOW() - INTERVAL '24 hours';",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "title": "Auth Failures (24h)",
+      "type": "stat",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS \"Failures\" FROM audit_logs WHERE event_type = 'AUTH_FAILURE' AND created_at > NOW() - INTERVAL '24 hours';",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "title": "Device Inventory",
+      "type": "table",
+      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
+      "gridPos": { "x": 0, "y": 4, "w": 16, "h": 10 },
+      "targets": [
+        {
+          "rawSql": "SELECT serial_number, hostname, ip_address, device_type, site_id, status, last_seen FROM devices ORDER BY last_seen DESC LIMIT 100;",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              {
+                "id": "custom.displayMode",
+                "value": "color-background-solid"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "active":  { "color": "green", "text": "active" } } },
+                  { "type": "value", "options": { "offline": { "color": "red",   "text": "offline" } } },
+                  { "type": "value", "options": { "unknown": { "color": "yellow","text": "unknown" } } }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "last_seen" },
+            "properties": [
+              { "id": "unit", "value": "dateTimeAsIsoNoDateIfToday" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "title": "API Request Rate",
+      "type": "timeseries",
+      "datasource": { "uid": "aeronet-prom", "type": "prometheus" },
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(http_requests_total{job=\"api-gateway\"}[5m])",
+          "legendFormat": "{{method}} {{handler}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "API Error Rate",
+      "type": "timeseries",
+      "datasource": { "uid": "aeronet-prom", "type": "prometheus" },
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(http_requests_total{job=\"api-gateway\",status=~\"5..\"}[5m])",
+          "legendFormat": "{{status}} {{handler}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "mode": "fixed", "fixedColor": "red" }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

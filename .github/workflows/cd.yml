@@ -1,0 +1,119 @@
+name: CD — Build, Push & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "production"
+        type: choice
+        options: [production, staging]
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false          # Never cancel an in-flight deploy
+
+env:
+  REGISTRY:     ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/aeronet-os
+
+jobs:
+
+  # ── 1. Build & Push All Images ───────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata (SHA + latest tag)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+
+      - name: Build & push all services
+        run: |
+          SERVICES="api-gateway enroller collector notifier portal"
+          TAG="${{ steps.meta.outputs.version }}"
+          for svc in $SERVICES; do
+            echo "Building $svc..."
+            docker buildx build \
+              --push \
+              --tag "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${svc}:${TAG}" \
+              --tag "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${svc}:latest" \
+              --cache-from "type=gha,scope=${svc}" \
+              --cache-to   "type=gha,scope=${svc},mode=max" \
+              "services/${svc}"
+          done
+          echo "Building frontend..."
+          docker buildx build \
+            --push \
+            --tag "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${TAG}" \
+            --tag "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:latest" \
+            --cache-from "type=gha,scope=frontend" \
+            --cache-to   "type=gha,scope=frontend,mode=max" \
+            frontend/
+
+  # ── 2. Deploy via SSH ────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Host
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key:      ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/aeronet-os
+
+            echo "Pulling latest images..."
+            docker compose -f infra/docker-compose.yml pull
+
+            echo "Rolling update (no downtime)..."
+            docker compose -f infra/docker-compose.yml up -d \
+              --remove-orphans \
+              --no-build
+
+            echo "Pruning old images..."
+            docker image prune -f --filter "until=24h"
+
+            echo "Deploy complete."
+            docker compose -f infra/docker-compose.yml ps
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "AeroNet OS deployed to ${{ github.event.inputs.environment || 'production' }}"
+          echo "  Image tag: ${{ needs.build-and-push.outputs.image-tag }}"
+          echo "  Commit:    ${{ github.sha }}"

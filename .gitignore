@@ -1,0 +1,52 @@
+# =============================================================================
+# AeroNet OS — .gitignore (production hardened)
+# =============================================================================
+
+# ---- Secrets (NEVER commit) ----
+.env
+.env.*
+!.env.secret.example
+*.pem
+*.key
+*.crt
+*.p12
+infra/nginx/certs/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ---- Node / Frontend ----
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# ---- Go ----
+services/portal/portal
+services/portal/tmp/
+
+# ---- Docker ----
+docker-compose.override.yml
+
+# ---- IDE / Editor ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- OS ----
+.DS_Store
+Thumbs.db

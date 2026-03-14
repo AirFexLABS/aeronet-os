@@ -1,0 +1,239 @@
+name: CI — Lint, Build & Smoke Test
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/aeronet-os
+
+jobs:
+
+  # ── 1. Lint & Type-Check ─────────────────────────────────────────────────
+  lint:
+    name: Lint & Type-Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Install linting tools
+        run: pip install ruff mypy asyncpg-stubs httpx
+
+      - name: Ruff — lint all Python services
+        run: |
+          ruff check services/api-gateway/app/
+          ruff check services/enroller/app/
+          ruff check services/collector/app/
+          ruff check services/notifier/app/
+
+      - name: Mypy — type-check all Python services
+        run: |
+          mypy services/api-gateway/app/  --ignore-missing-imports
+          mypy services/enroller/app/     --ignore-missing-imports
+          mypy services/collector/app/    --ignore-missing-imports
+          mypy services/notifier/app/     --ignore-missing-imports
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Frontend — install deps & type-check
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npx tsc --noEmit
+
+      - name: Set up Go 1.22
+        uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+
+      - name: Portal — go vet
+        working-directory: services/portal
+        run: go vet ./...
+
+  # ── 2. Build Docker Images ───────────────────────────────────────────────
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: lint
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}
+          tags: |
+            type=sha,prefix=pr-
+            type=ref,event=branch
+
+      - name: Build api-gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: services/api-gateway
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api-gateway:${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=api-gateway
+          cache-to:   type=gha,scope=api-gateway,mode=max
+          load: true
+
+      - name: Build enroller
+        uses: docker/build-push-action@v6
+        with:
+          context: services/enroller
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/enroller:${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=enroller
+          cache-to:   type=gha,scope=enroller,mode=max
+          load: true
+
+      - name: Build collector
+        uses: docker/build-push-action@v6
+        with:
+          context: services/collector
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/collector:${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=collector
+          cache-to:   type=gha,scope=collector,mode=max
+          load: true
+
+      - name: Build notifier
+        uses: docker/build-push-action@v6
+        with:
+          context: services/notifier
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/notifier:${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=notifier
+          cache-to:   type=gha,scope=notifier,mode=max
+          load: true
+
+      - name: Build portal
+        uses: docker/build-push-action@v6
+        with:
+          context: services/portal
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/portal:${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=portal
+          cache-to:   type=gha,scope=portal,mode=max
+          load: true
+
+      - name: Build frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=frontend
+          cache-to:   type=gha,scope=frontend,mode=max
+          load: true
+
+  # ── 3. Smoke Tests ───────────────────────────────────────────────────────
+  smoke-test:
+    name: Smoke Tests (Live Stack)
+    runs-on: ubuntu-latest
+    needs: build
+
+    env:
+      POSTGRES_PASSWORD:      ${{ secrets.CI_POSTGRES_PASSWORD }}
+      SECRET_KEY:             ${{ secrets.CI_SECRET_KEY }}
+      MIST_API_TOKEN:         ${{ secrets.CI_MIST_API_TOKEN }}
+      MIST_SITE_ID:           ${{ secrets.CI_MIST_SITE_ID }}
+      TWILIO_ACCOUNT_SID:     ${{ secrets.CI_TWILIO_ACCOUNT_SID }}
+      TWILIO_AUTH_TOKEN:       ${{ secrets.CI_TWILIO_AUTH_TOKEN }}
+      TELEGRAM_BOT_TOKEN:     ${{ secrets.CI_TELEGRAM_BOT_TOKEN }}
+      GRAFANA_ADMIN_PASSWORD: ${{ secrets.CI_GRAFANA_ADMIN_PASSWORD }}
+      NOTIFIER_URL:           http://localhost:8001
+      ENROLLER_URL:           http://localhost:8002
+      # Null-sink flag — notifier reads this to suppress real Twilio/Telegram delivery in CI
+      SMOKE_TEST:             "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write .env.secret for Compose
+        run: |
+          cat > .env.secret << EOF
+          POSTGRES_PASSWORD=${{ secrets.CI_POSTGRES_PASSWORD }}
+          SECRET_KEY=${{ secrets.CI_SECRET_KEY }}
+          MIST_API_TOKEN=${{ secrets.CI_MIST_API_TOKEN }}
+          MIST_SITE_ID=${{ secrets.CI_MIST_SITE_ID }}
+          TWILIO_ACCOUNT_SID=${{ secrets.CI_TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN=${{ secrets.CI_TWILIO_AUTH_TOKEN }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.CI_TELEGRAM_BOT_TOKEN }}
+          GRAFANA_ADMIN_PASSWORD=${{ secrets.CI_GRAFANA_ADMIN_PASSWORD }}
+          NOTIFIER_URL=http://notifier:8001
+          ENROLLER_URL=http://enroller:8002
+          SMOKE_TEST=true
+          EOF
+
+      - name: Start stack (with override for test port exposure)
+        run: |
+          docker compose \
+            -f infra/docker-compose.yml \
+            -f infra/docker-compose.override.yml \
+            --env-file .env.secret \
+            up -d
+          echo "Waiting 20s for services to initialize..."
+          sleep 20
+
+      - name: Set up Python for test runner
+        uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements-test.txt
+
+      - name: Run pre-flight checks
+        run: bash tests/smoke/preflight.sh
+
+      - name: Run smoke tests
+        run: pytest tests/smoke/ -v --timeout=30 --tb=short --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-results
+          path: test-results.xml
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          docker compose -f infra/docker-compose.yml logs --tail=100
+
+      - name: Tear down stack
+        if: always()
+        run: |
+          docker compose \
+            -f infra/docker-compose.yml \
+            -f infra/docker-compose.override.yml \
+            down -v
