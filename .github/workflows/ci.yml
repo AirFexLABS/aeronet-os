@@ -97,7 +97,7 @@ jobs:
             type=ref,event=branch
 
       - name: Build api-gateway
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/api-gateway
           push: false
@@ -107,7 +107,7 @@ jobs:
           load: true
 
       - name: Build enroller
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/enroller
           push: false
@@ -117,7 +117,7 @@ jobs:
           load: true
 
       - name: Build collector
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/collector
           push: false
@@ -127,7 +127,7 @@ jobs:
           load: true
 
       - name: Build notifier
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/notifier
           push: false
@@ -137,7 +137,7 @@ jobs:
           load: true
 
       - name: Build portal
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/portal
           push: false
@@ -147,7 +147,7 @@ jobs:
           load: true
 
       - name: Build frontend
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: frontend
           push: false
