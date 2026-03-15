@@ -1,20 +1,35 @@
 {
   "uid": "aeronet-alert-history",
   "title": "Alert History & Audit Log",
-  "tags": ["aeronet", "alerts", "audit"],
+  "tags": [
+    "aeronet",
+    "alerts",
+    "audit"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
   "refresh": "1m",
-  "time": { "from": "now-24h", "to": "now" },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
   "editable": false,
   "panels": [
     {
       "id": 1,
       "title": "Critical Alerts (24h)",
       "type": "stat",
-      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
-      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": {
+        "uid": "aeronet-pg",
+        "type": "postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
       "targets": [
         {
           "rawSql": "SELECT COUNT(*) AS \"Critical\" FROM audit_logs WHERE severity = 'CRITICAL' AND created_at > NOW() - INTERVAL '24 hours';",
@@ -27,22 +42,45 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 5 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
             ]
           }
         },
         "overrides": []
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 2,
       "title": "Warning Alerts (24h)",
       "type": "stat",
-      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
-      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": {
+        "uid": "aeronet-pg",
+        "type": "postgres"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
       "targets": [
         {
           "rawSql": "SELECT COUNT(*) AS \"Warnings\" FROM audit_logs WHERE severity = 'WARNING' AND created_at > NOW() - INTERVAL '24 hours';",
@@ -55,22 +93,45 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 3 },
-              { "color": "red", "value": 10 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
             ]
           }
         },
         "overrides": []
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 3,
       "title": "Alerts by Type (24h)",
       "type": "barchart",
-      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
-      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": {
+        "uid": "aeronet-pg",
+        "type": "postgres"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
       "targets": [
         {
           "rawSql": "SELECT event_type, COUNT(*) AS count FROM audit_logs WHERE created_at > NOW() - INTERVAL '24 hours' GROUP BY event_type ORDER BY count DESC;",
@@ -91,8 +152,16 @@
       "id": 4,
       "title": "Alert Volume Over Time",
       "type": "timeseries",
-      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
-      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": {
+        "uid": "aeronet-pg",
+        "type": "postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
       "targets": [
         {
           "rawSql": "SELECT DATE_TRUNC('hour', created_at) AS time, severity, COUNT(*) AS count FROM audit_logs WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY 1, 2 ORDER BY 1;",
@@ -111,8 +180,16 @@
       "id": 5,
       "title": "Raw Audit Log",
       "type": "table",
-      "datasource": { "uid": "aeronet-pg", "type": "postgres" },
-      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 12 },
+      "datasource": {
+        "uid": "aeronet-pg",
+        "type": "postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 24,
+        "h": 12
+      },
       "targets": [
         {
           "rawSql": "SELECT created_at, event_type, severity, device_serial, source_service, message FROM audit_logs ORDER BY created_at DESC LIMIT 200;",
@@ -124,7 +201,10 @@
         "defaults": {},
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "severity" },
+            "matcher": {
+              "id": "byName",
+              "options": "severity"
+            },
             "properties": [
               {
                 "id": "custom.displayMode",
@@ -133,18 +213,56 @@
               {
                 "id": "mappings",
                 "value": [
-                  { "type": "value", "options": { "CRITICAL": { "color": "red",    "text": "CRITICAL" } } },
-                  { "type": "value", "options": { "WARNING":  { "color": "yellow", "text": "WARNING" } } },
-                  { "type": "value", "options": { "ERROR":    { "color": "orange", "text": "ERROR" } } },
-                  { "type": "value", "options": { "INFO":     { "color": "blue",   "text": "INFO" } } }
+                  {
+                    "type": "value",
+                    "options": {
+                      "CRITICAL": {
+                        "color": "red",
+                        "text": "CRITICAL"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "WARNING": {
+                        "color": "yellow",
+                        "text": "WARNING"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "ERROR": {
+                        "color": "orange",
+                        "text": "ERROR"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "INFO": {
+                        "color": "blue",
+                        "text": "INFO"
+                      }
+                    }
+                  }
                 ]
               }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "created_at" },
+            "matcher": {
+              "id": "byName",
+              "options": "created_at"
+            },
             "properties": [
-              { "id": "unit", "value": "dateTimeAsIso" }
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
             ]
           }
         ]
