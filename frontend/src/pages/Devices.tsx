@@ -1,7 +1,8 @@
+import { StatusBadge } from "../components/ui/StatusBadge";
 import { useNavigate } from "react-router-dom";
 import { useDevices } from "../hooks/useDevices";
 import { DataTable } from "../components/ui/DataTable";
-import { StatusBadge } from "../components/ui/StatusBadge";
+
 import { PageHeader } from "../components/layout/PageHeader";
 import { EmptyState } from "../components/ui/EmptyState";
 import type { Device } from "../api/client";

@@ -7,9 +7,14 @@ from typing import Annotated
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+
+
 import jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
+
+
 
 from ..models.user import Role, TokenPayload, UserInDB
 from .. import db
@@ -20,15 +25,12 @@ SECRET_KEY                  = os.environ["SECRET_KEY"]
 ALGORITHM                   = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
-
+    return _bcrypt.checkpw(plain.encode(), hashed.encode())
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt(rounds=12)).decode()
 
 
 def create_access_token(username: str, role: Role, site_id: str | None) -> str:
@@ -80,3 +82,15 @@ async def login(form: Annotated[OAuth2PasswordRequestForm, Depends()]):
 
     token = create_access_token(user.username, user.role, user.site_id)
     return {"access_token": token, "token_type": "bearer"}
+
+@router.get("/me")
+async def me(token: Annotated[str, Depends(oauth2_scheme)]):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return {
+            "username": payload["sub"],
+            "role":     payload["role"],
+            "site_id":  payload.get("site_id"),
+        }
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")

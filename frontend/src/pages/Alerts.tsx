@@ -1,7 +1,8 @@
+import { StatusBadge } from "../components/ui/StatusBadge";
 import { useState } from "react";
 import { useAlerts } from "../hooks/useAlerts";
 import { DataTable } from "../components/ui/DataTable";
-import { StatusBadge } from "../components/ui/StatusBadge";
+
 import { PageHeader } from "../components/layout/PageHeader";
 import { EmptyState } from "../components/ui/EmptyState";
 import type { AuditLog } from "../api/client";

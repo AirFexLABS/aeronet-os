@@ -21,16 +21,21 @@ services:
     depends_on:
       - api-gateway
       - frontend
+      - portal
       - grafana
     security_opt:
       - no-new-privileges:true
-    read_only: true
     tmpfs:
       - /tmp
       - /var/cache/nginx
       - /var/run
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
     deploy:
       resources:
         limits:
@@ -70,6 +75,8 @@ services:
       - CHOWN
       - SETUID
       - SETGID
+      - FOWNER
+      - DAC_OVERRIDE
     deploy:
       resources:
         limits:
@@ -112,16 +119,16 @@ services:
         reservations:
           memory: 2g
 
-  # ---------------------------------------------------------------------------
-  # API Gateway — FastAPI RBAC + device inventory REST API
-  # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# API Gateway — FastAPI RBAC + device inventory REST API
+# ---------------------------------------------------------------------------
   api-gateway:
     build:
       context: ../services/api-gateway
     container_name: aeronet-api-gateway
     env_file: ../.env.secret
     environment:
-      DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet
+      DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet?sslmode=disable
       ENROLLER_URL: http://enroller:8002
     networks:
       - aeronet-internal
@@ -133,7 +140,6 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    read_only: true
     tmpfs:
       - /tmp
     cap_drop:
@@ -146,6 +152,7 @@ services:
         reservations:
           memory: 512m
 
+
   # ---------------------------------------------------------------------------
   # Collector — Juniper MIST API polling worker
   # ---------------------------------------------------------------------------
@@ -154,7 +161,7 @@ services:
       context: ../services/collector
     env_file: ../.env.secret
     environment:
-      DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet
+      DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet?sslmode=disable
       NOTIFIER_URL: http://notifier:8001
     networks:
       - aeronet-internal
@@ -187,7 +194,7 @@ services:
       context: ../services/enroller
     env_file: ../.env.secret
     environment:
-      DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet
+      DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet?sslmode=disable
       NOTIFIER_URL: http://notifier:8001
       SCAN_TARGETS: ${SCAN_TARGETS:-}
       SCAN_INTERVAL_MINUTES: ${SCAN_INTERVAL_MINUTES:-30}
@@ -223,7 +230,7 @@ services:
       context: ../services/notifier
     env_file: ../.env.secret
     environment:
-      DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet
+      DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet?sslmode=disable
     networks:
       - aeronet-internal
     depends_on:
@@ -290,13 +297,18 @@ services:
       - api-gateway
     security_opt:
       - no-new-privileges:true
-    read_only: true
     tmpfs:
       - /tmp
       - /var/cache/nginx
       - /var/run
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+
     deploy:
       resources:
         limits:

@@ -25,6 +25,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface Device {
+  [key: string]: unknown;
   serial_number: string;
   hostname: string;
   ip_address: string;
@@ -45,6 +46,7 @@ export interface ConnectivityEntry {
 }
 
 export interface AuditLog {
+  [key: string]: unknown;
   id: number;
   event_type: string;
   severity: "INFO" | "WARNING" | "ERROR" | "CRITICAL";

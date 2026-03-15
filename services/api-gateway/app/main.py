@@ -1,21 +1,28 @@
 # FastAPI application entry point: RBAC + device inventory REST API
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 from .routers import devices, auth
 from . import db
 
 app = FastAPI(title="AeroNet OS API Gateway")
 
-from prometheus_fastapi_instrumentator import Instrumentator
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://aeronet.local"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 Instrumentator().instrument(app).expose(app)
 
 app.include_router(auth.router)
 app.include_router(devices.router)
 
-
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "api-gateway"}
-
 
 @app.on_event("shutdown")
 async def shutdown():
