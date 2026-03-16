@@ -63,6 +63,32 @@ export interface DashboardStats {
   auth_failures_24h: number;
 }
 
+export interface DiscoveredDevice {
+  ip:           string;
+  hostname:     string;
+  mac:          string;
+  vendor:       string;
+  device_class: "router" | "switch" | "ap" | "server" | "printer" | "unknown";
+  open_ports:   number[];
+  os_guess:     string;
+  confidence:   number;
+  snmp_desc:    string | null;
+}
+
+export interface DiscoverRequest {
+  cidr:    string;
+  timeout?: number;
+}
+
+export interface DeviceRegistration {
+  serial_number: string;
+  hostname:      string;
+  ip_address:    string;
+  device_type:   string;
+  site_id:       string;
+  status:        string;
+}
+
 // ── API calls ────────────────────────────────────────────────────────────
 
 export const api = {
@@ -86,6 +112,21 @@ export const api = {
       request<{ status: string }>("/enroller/check", {
         method: "POST",
         body: JSON.stringify({ cidr }),
+      }),
+  },
+  discover: {
+    scan: (req: DiscoverRequest) =>
+      request<DiscoveredDevice[]>("/discover", {
+        method: "POST",
+        body: JSON.stringify(req),
+      }),
+    sites: () => request<string[]>("/sites"),
+  },
+  register: {
+    device: (reg: DeviceRegistration) =>
+      request<{ serial_number: string; status: string }>("/devices", {
+        method: "POST",
+        body: JSON.stringify(reg),
       }),
   },
 };

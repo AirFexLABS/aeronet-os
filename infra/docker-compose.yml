@@ -188,9 +188,9 @@ services:
         reservations:
           memory: 1g
 
-  # ---------------------------------------------------------------------------
-  # Enroller — Nmap discovery + Scrapli SSH provisioning worker
-  # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Enroller — Nmap discovery + Scrapli SSH provisioning worker
+# ---------------------------------------------------------------------------
   enroller:
     build:
       context: ../services/enroller
@@ -211,11 +211,13 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    read_only: true
     tmpfs:
       - /tmp
     cap_drop:
       - ALL
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     deploy:
       resources:
         limits:
@@ -223,6 +225,7 @@ services:
           cpus: "2.0"
         reservations:
           memory: 512m
+
 
   # ---------------------------------------------------------------------------
   # Notifier — Two-way Twilio/Telegram alert bridge

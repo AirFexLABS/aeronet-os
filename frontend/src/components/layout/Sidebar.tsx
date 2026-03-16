@@ -8,6 +8,7 @@ const NAV = [
   { to: "/devices", label: "Devices", icon: "\u25c8" },
   { to: "/topology", label: "Topology", icon: "\u2b21" },
   { to: "/alerts", label: "Alerts", icon: "\u25ce" },
+  { to: "/discovery", label: "Discovery", icon: "\u2295" },
 ];
 
 function roleLabel(role: string): string {

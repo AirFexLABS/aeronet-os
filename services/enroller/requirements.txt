@@ -8,3 +8,4 @@ prometheus-fastapi-instrumentator==7.0.0
 python-nmap==0.7.1
 cryptography==42.0.8
 apscheduler==3.10.4
+mac-vendor-lookup==0.1.12

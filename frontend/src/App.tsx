@@ -8,6 +8,7 @@ import { Devices } from "./pages/Devices";
 import { DeviceDetail } from "./pages/DeviceDetail";
 import { Topology } from "./pages/Topology";
 import { Alerts } from "./pages/Alerts";
+import { Discovery } from "./pages/Discovery";
 import { useTheme } from "./hooks/useTheme";
 import { useTokenRefresh } from "./hooks/useTokenRefresh";
 
@@ -30,6 +31,7 @@ function AppInner() {
         <Route path="devices/:serial" element={<DeviceDetail />} />
         <Route path="topology" element={<Topology />} />
         <Route path="alerts" element={<Alerts />} />
+        <Route path="discovery" element={<Discovery />} />
       </Route>
     </Routes>
   );

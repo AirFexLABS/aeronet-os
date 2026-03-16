@@ -13,7 +13,7 @@ from fastapi import FastAPI, BackgroundTasks
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
-from app.scanner import NmapScanner
+from app.scanner import NmapScanner, fingerprint_device
 from app.asset_tracker import AssetTracker
 from app.db import get_pool, close_pool
 
@@ -74,6 +74,11 @@ class ScanRequest(BaseModel):
     comment: str = ""
 
 
+class DiscoverRequest(BaseModel):
+    cidr: str
+    timeout: int = 30
+
+
 class CheckRequest(BaseModel):
     serial_number: str
     ip: str
@@ -126,3 +131,50 @@ async def check_device(req: CheckRequest):
     )
     await tracker.close()
     return {"status": "accepted"}
+
+
+@app.post("/discover")
+async def discover_network(req: DiscoverRequest) -> list[dict]:
+    """
+    Scan a CIDR block and return fingerprinted device list.
+    Runs synchronously (up to timeout) — returns results directly.
+    """
+    import ipaddress
+
+    # Validate CIDR
+    try:
+        network = ipaddress.ip_network(req.cidr, strict=False)
+    except ValueError:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=422, detail="Invalid CIDR format")
+
+    # Discover hosts first with a quick ping sweep
+    quick_scanner = NmapScanner(arguments="-sn -T4")
+    hosts = await asyncio.wait_for(
+        quick_scanner.scan_cidr(req.cidr),
+        timeout=req.timeout,
+    )
+
+    # Fingerprint each discovered host concurrently
+    tasks = [fingerprint_device(h["ip"]) for h in hosts]
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=req.timeout,
+        )
+    except asyncio.TimeoutError:
+        results = []
+
+    return [r for r in results if isinstance(r, dict)]
+
+
+@app.get("/sites")
+async def list_sites() -> list[str]:
+    """Return distinct site_ids from the devices table for the site selector."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT DISTINCT site_id FROM devices ORDER BY site_id"
+        )
+    return [row["site_id"] for row in rows]

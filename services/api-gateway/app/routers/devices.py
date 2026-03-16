@@ -128,6 +128,38 @@ async def delete_device(serial: str):
         raise HTTPException(status_code=404, detail="Device not found")
 
 
+# ── POST /discover — proxy network discovery to enroller ──────────────────
+@router.post(
+    "/discover",
+    dependencies=[Depends(require_permission("scan:trigger"))],
+)
+async def proxy_discover(payload: dict):
+    """Proxy network discovery scan to enroller service."""
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(f"{ENROLLER_URL}/discover", json=payload)
+    return Response(
+        content=r.content,
+        status_code=r.status_code,
+        media_type="application/json",
+    )
+
+
+# ── GET /sites — proxy site list to enroller ──────────────────────────────
+@router.get(
+    "/sites",
+    dependencies=[Depends(require_permission("devices:read"))],
+)
+async def proxy_sites():
+    """Proxy site list to enroller service."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{ENROLLER_URL}/sites")
+    return Response(
+        content=r.content,
+        status_code=r.status_code,
+        media_type="application/json",
+    )
+
+
 # ── POST /enroller/check — proxy to enroller service ──────────────────────
 @router.post(
     "/enroller/check",
