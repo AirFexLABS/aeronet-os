@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
-from .routers import devices, auth
+from .routers import devices, auth, vault
 from . import db
 
 app = FastAPI(title="AeroNet OS API Gateway")
@@ -19,6 +19,7 @@ Instrumentator().instrument(app).expose(app)
 
 app.include_router(auth.router)
 app.include_router(devices.router)
+app.include_router(vault.router)
 
 @app.get("/health")
 async def health():

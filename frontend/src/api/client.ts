@@ -89,6 +89,54 @@ export interface DeviceRegistration {
   status:        string;
 }
 
+// ── Vault types ──────────────────────────────────────────────────────────
+
+export type CredentialType =
+  | "ssh_password"
+  | "ssh_key"
+  | "api_token"
+  | "snmp_v2_community"
+  | "snmp_v3"
+  | "tls_cert";
+
+export interface VaultEntry {
+  id:              string;
+  name:            string;
+  credential_type: CredentialType;
+  scope:           string;
+  username:        string | null;
+  metadata:        Record<string, unknown>;
+  tags:            string[];
+  created_by:      string;
+  created_at:      string;
+  updated_at:      string;
+  last_used_at:    string | null;
+  expires_at:      string | null;
+  is_active:       boolean;
+  is_expired:      boolean;
+}
+
+export interface VaultCreate {
+  name:            string;
+  credential_type: CredentialType;
+  scope:           string;
+  username?:       string;
+  secret_value:    string;
+  metadata?:       Record<string, unknown>;
+  tags?:           string[];
+  expires_at?:     string;
+}
+
+export interface VaultAuditEntry {
+  id:             number;
+  vault_id:       string | null;
+  action:         string;
+  performed_by:   string;
+  source_service: string | null;
+  ip_address:     string | null;
+  created_at:     string;
+}
+
 // ── API calls ────────────────────────────────────────────────────────────
 
 export const api = {
@@ -128,5 +176,29 @@ export const api = {
         method: "POST",
         body: JSON.stringify(reg),
       }),
+  },
+  vault: {
+    list: (params?: string) =>
+      request<VaultEntry[]>(`/vault${params ? "?" + params : ""}`),
+    get: (id: string) => request<VaultEntry>(`/vault/${id}`),
+    create: (data: VaultCreate) =>
+      request<VaultEntry>("/vault", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: Partial<VaultCreate>) =>
+      request<VaultEntry>(`/vault/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      request<void>(`/vault/${id}`, { method: "DELETE" }),
+    rotate: (id: string, newSecret: string) =>
+      request<VaultEntry>(`/vault/${id}/rotate`, {
+        method: "POST",
+        body: JSON.stringify({ new_secret_value: newSecret }),
+      }),
+    audit: (id: string) =>
+      request<VaultAuditEntry[]>(`/vault/${id}/audit`),
   },
 };

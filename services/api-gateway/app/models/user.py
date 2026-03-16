@@ -18,14 +18,17 @@ class Role(str, Enum):
 ROLE_PERMISSIONS: dict[Role, set[str]] = {
     Role.VIEWER:   {"devices:read", "alerts:read",  "dashboard:read"},
     Role.OPERATOR: {"devices:read", "alerts:read",  "alerts:ack",
-                    "dashboard:read", "scan:trigger"},
+                    "dashboard:read", "scan:trigger",
+                    "vault:read", "vault:write"},
     Role.ENGINEER: {"devices:read", "devices:write", "alerts:read",
                     "alerts:ack",   "dashboard:read", "scan:trigger",
-                    "provision:run"},
+                    "provision:run",
+                    "vault:read", "vault:write"},
     Role.ADMIN:    {"devices:read", "devices:write", "alerts:read",
                     "alerts:ack",   "dashboard:read", "scan:trigger",
                     "provision:run", "users:read",   "users:write",
-                    "audit:read"},
+                    "audit:read",
+                    "vault:read", "vault:write", "vault:admin"},
 }
 
 

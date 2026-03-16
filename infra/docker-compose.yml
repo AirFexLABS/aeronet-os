@@ -294,8 +294,8 @@ services:
   frontend:
     build:
       context: ../frontend
-    volumes:
-      - assets_data:/usr/share/nginx/html/assets
+    #volumes:
+    #  - assets_data:/usr/share/nginx/html/assets
     networks:
       - aeronet-internal
     depends_on:
@@ -398,5 +398,5 @@ networks:
 volumes:
   postgres_data:
   grafana_data:
-  assets_data:
+  #assets_data:
   prometheus_data:

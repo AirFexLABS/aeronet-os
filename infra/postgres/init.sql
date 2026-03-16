@@ -136,3 +136,70 @@ VALUES (
     '$2b$12$PLACEHOLDER_REPLACE_BEFORE_PRODUCTION'
 )
 ON CONFLICT (username) DO NOTHING;
+
+-- =============================================================================
+-- Enum: credential_type
+-- Credential types supported by the vault
+-- =============================================================================
+CREATE TYPE credential_type AS ENUM (
+    'ssh_password',
+    'ssh_key',
+    'api_token',
+    'snmp_v2_community',
+    'snmp_v3',
+    'tls_cert'
+);
+
+-- =============================================================================
+-- Table: vault
+-- Encrypted credential store — all sensitive values encrypted with Fernet
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS vault (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            VARCHAR(128) NOT NULL,          -- Human label: "BCN Core Switch SSH"
+    credential_type credential_type NOT NULL,
+    scope           VARCHAR(64) NOT NULL,           -- 'global' | site_id | serial_number
+    username        VARCHAR(128),                   -- SSH username, SNMP v3 user, etc.
+    encrypted_value TEXT NOT NULL,                  -- Fernet-encrypted sensitive value
+    metadata        JSONB DEFAULT '{}',             -- Non-sensitive extras (port, auth_protocol, etc.)
+    tags            TEXT[] DEFAULT '{}',            -- e.g. ['bcn', 'cisco', 'core']
+    created_by      VARCHAR(64) NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at    TIMESTAMPTZ,
+    expires_at      TIMESTAMPTZ,                    -- Optional expiry
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_vault_scope ON vault (scope);
+CREATE INDEX IF NOT EXISTS idx_vault_type  ON vault (credential_type);
+CREATE INDEX IF NOT EXISTS idx_vault_name  ON vault USING gin(to_tsvector('english', name));
+
+-- =============================================================================
+-- Table: vault_audit
+-- Audit trail for vault access — records actions, never values
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS vault_audit (
+    id              SERIAL PRIMARY KEY,
+    vault_id        UUID REFERENCES vault(id) ON DELETE SET NULL,
+    action          VARCHAR(32) NOT NULL,   -- 'created' | 'read' | 'updated' | 'deleted' | 'rotated'
+    performed_by    VARCHAR(64) NOT NULL,
+    source_service  VARCHAR(64),
+    ip_address      VARCHAR(45),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- =============================================================================
+-- Trigger: auto-update updated_at on vault row change
+-- =============================================================================
+CREATE OR REPLACE FUNCTION update_vault_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER vault_updated_at
+    BEFORE UPDATE ON vault
+    FOR EACH ROW EXECUTE FUNCTION update_vault_timestamp();

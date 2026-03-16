@@ -8,6 +8,7 @@ import os
 import re
 from dataclasses import dataclass
 
+import httpx
 import nmap
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,102 @@ def _classify_device(
     return "unknown"
 
 
+API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway:8000")
+API_GATEWAY_TOKEN = os.getenv("API_GATEWAY_TOKEN", "")
+
+
+async def get_snmp_description(ip: str, community: str = "public") -> str | None:
+    """
+    Query SNMP OID 1.3.6.1.2.1.1.1.0 (sysDescr) for device description.
+    Uses pysnmp. Returns None if unreachable or no SNMP.
+    Timeout: 2 seconds.
+    """
+    try:
+        from pysnmp.hlapi.v3arch.asyncio import (
+            CommunityData,
+            ObjectIdentity,
+            ObjectType,
+            SnmpEngine,
+            UdpTransportTarget,
+            get_cmd,
+        )
+
+        engine = SnmpEngine()
+        error_indication, error_status, _, var_binds = await get_cmd(
+            engine,
+            CommunityData(community),
+            await UdpTransportTarget.create((ip, 161), timeout=2, retries=0),
+            ObjectType(ObjectIdentity("1.3.6.1.2.1.1.1.0")),
+        )
+        engine.close_dispatcher()
+        if error_indication or error_status:
+            return None
+        for _, val in var_binds:
+            desc = str(val).strip()
+            if desc:
+                return desc[:256]
+        return None
+    except Exception:
+        logger.debug(f"SNMP query failed for {ip} with community '{community[:4]}...'")
+        return None
+
+
+async def enrich_with_vault_snmp(ip: str, site_id: str | None = None) -> str | None:
+    """
+    Look up SNMP community strings from vault for this IP's site.
+    Try each community string until one works.
+    Returns sysDescr if successful, None otherwise.
+    """
+    if not API_GATEWAY_TOKEN:
+        return None
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {API_GATEWAY_TOKEN}",
+            "x-source-service": "enroller",
+        }
+        # Fetch SNMP v2 credentials from vault, filtered by scope
+        params = "type=snmp_v2_community&active=true"
+        if site_id:
+            params += f"&scope={site_id}"
+
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{API_GATEWAY_URL}/vault?{params}", headers=headers)
+            if r.status_code != 200:
+                return None
+            vault_entries = r.json()
+
+            # Also try global-scoped entries
+            if site_id:
+                r2 = await client.get(
+                    f"{API_GATEWAY_URL}/vault?type=snmp_v2_community&active=true&scope=global",
+                    headers=headers,
+                )
+                if r2.status_code == 200:
+                    vault_entries.extend(r2.json())
+
+            # Try each community string from the vault
+            for entry in vault_entries:
+                use_r = await client.post(
+                    f"{API_GATEWAY_URL}/vault/{entry['id']}/use",
+                    headers=headers,
+                )
+                if use_r.status_code != 200:
+                    continue
+                community = use_r.json().get("value", "")
+                if not community:
+                    continue
+
+                desc = await get_snmp_description(ip, community)
+                if desc:
+                    return desc
+
+    except Exception:
+        logger.debug(f"Vault SNMP enrichment failed for {ip}")
+
+    return None
+
+
 async def fingerprint_device(ip: str) -> dict:
     """
     Fingerprint a single IP address: run an Nmap scan and return enriched
@@ -236,6 +333,12 @@ async def fingerprint_device(ip: str) -> dict:
         if "snmp" in script_output.get("id", "").lower():
             snmp_desc = script_output.get("output", "")[:256]
             break
+
+    # If no SNMP description from Nmap, try vault community strings
+    if snmp_desc is None and 161 in set(open_ports):
+        vault_desc = await enrich_with_vault_snmp(ip)
+        if vault_desc:
+            snmp_desc = vault_desc
 
     # Confidence score: more data = higher confidence
     confidence = 20  # base: host is up
