@@ -25,20 +25,13 @@ print(bcrypt.hashpw(pw, bcrypt.gensalt(rounds=12)).decode())
 " "$PASSWORD")
 
 docker exec -i aeronet-postgres psql \
-  -U aeronet -d aeronet << SQL
-INSERT INTO users (username, email, hashed_password, role, is_active)
-VALUES (
-  'superadmin',
-  'admin@aeronet.local',
-  '$HASH',
-  'admin',
-  true
-)
-ON CONFLICT (username) DO UPDATE
-  SET hashed_password = EXCLUDED.hashed_password,
-      role            = EXCLUDED.role,
-      is_active       = EXCLUDED.is_active;
-SQL
+  -U aeronet -d aeronet \
+  -c "INSERT INTO users (username, email, hashed_password, role, is_active)
+      VALUES ('superadmin', 'superadmin@aeronet.local', \$\$${HASH}\$\$, 'admin', true)
+      ON CONFLICT (username) DO UPDATE
+        SET hashed_password = EXCLUDED.hashed_password,
+            role            = EXCLUDED.role,
+            is_active       = EXCLUDED.is_active;"
 
 echo ""
 echo "Superadmin user seeded."
