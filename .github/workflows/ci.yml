@@ -12,7 +12,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository_owner }}/aeronet-os
+  IMAGE_PREFIX: airfexlabs/aeronet-os
 
 jobs:
 
