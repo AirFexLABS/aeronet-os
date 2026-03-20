@@ -6,7 +6,6 @@ import {
   ChannelCreatePayload,
   ContactCreatePayload,
   EmailConfig,
-  TestResult,
   ChannelType,
   MinSeverity,
 } from "../api/client";
