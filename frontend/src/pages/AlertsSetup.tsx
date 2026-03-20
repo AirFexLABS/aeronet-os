@@ -5,6 +5,7 @@ import {
   AlertContact,
   ChannelCreatePayload,
   ContactCreatePayload,
+  EmailConfig,
   TestResult,
   ChannelType,
   MinSeverity,
@@ -123,6 +124,17 @@ export function AlertsSetup() {
   // Test state
   const [testingId, setTestingId] = useState<string | null>(null);
 
+  // Email config state
+  const [emailExpanded, setEmailExpanded] = useState(false);
+  const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null);
+  const [emailForm, setEmailForm] = useState({
+    smtp_host: "", smtp_port: 587, smtp_username: "", smtp_password: "",
+    from_address: "", from_name: "AeroNet OS", use_tls: true,
+  });
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailTestRecipient, setEmailTestRecipient] = useState("");
+  const [emailTesting, setEmailTesting] = useState(false);
+
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -150,9 +162,28 @@ export function AlertsSetup() {
     }
   }, []);
 
+  const fetchEmailConfig = useCallback(async () => {
+    try {
+      const cfg = await api.emailConfig.get();
+      setEmailConfig(cfg);
+      setEmailForm({
+        smtp_host: cfg.smtp_host,
+        smtp_port: cfg.smtp_port,
+        smtp_username: cfg.smtp_username,
+        smtp_password: cfg.is_configured ? "" : "", // Don't prefill password
+        from_address: cfg.from_address,
+        from_name: cfg.from_name,
+        use_tls: cfg.use_tls,
+      });
+    } catch {
+      // Email config table may not exist yet
+    }
+  }, []);
+
   useEffect(() => {
     fetchContacts();
-  }, [fetchContacts]);
+    fetchEmailConfig();
+  }, [fetchContacts, fetchEmailConfig]);
 
   // ── Drawer handlers ────────────────────────────────────────────────────
 
@@ -331,9 +362,7 @@ export function AlertsSetup() {
     try {
       const { results } = await api.alertContacts.test(contact.id);
       for (const r of results) {
-        if (r.channel_type === "email") {
-          addToast("Email test skipped -- SMTP not yet configured", "info");
-        } else if (r.success) {
+        if (r.success) {
           addToast(`Test sent via ${CHANNEL_CONFIG[r.channel_type].label}`, "success");
         } else {
           addToast(`${CHANNEL_CONFIG[r.channel_type].label} test failed: ${r.error}`, "error");
@@ -346,6 +375,54 @@ export function AlertsSetup() {
       addToast(e instanceof Error ? e.message : "Test failed", "error");
     } finally {
       setTestingId(null);
+    }
+  }
+
+  // ── Email config handlers ───────────────────────────────────────────────
+
+  async function handleEmailSave() {
+    if (!emailForm.smtp_host.trim() || !emailForm.from_address.trim()) {
+      addToast("SMTP host and From address are required", "error");
+      return;
+    }
+    setEmailSaving(true);
+    try {
+      const payload = {
+        smtp_host: emailForm.smtp_host.trim(),
+        smtp_port: emailForm.smtp_port,
+        smtp_username: emailForm.smtp_username.trim(),
+        smtp_password: emailForm.smtp_password || (emailConfig?.smtp_password ?? ""),
+        from_address: emailForm.from_address.trim(),
+        from_name: emailForm.from_name.trim(),
+        use_tls: emailForm.use_tls,
+      };
+      await api.emailConfig.update(payload);
+      await fetchEmailConfig();
+      addToast("Email server configuration saved", "success");
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : "Failed to save email config", "error");
+    } finally {
+      setEmailSaving(false);
+    }
+  }
+
+  async function handleEmailTest() {
+    if (!emailTestRecipient.trim() || !emailTestRecipient.includes("@")) {
+      addToast("Enter a valid email address to test", "error");
+      return;
+    }
+    setEmailTesting(true);
+    try {
+      const result = await api.emailConfig.test(emailTestRecipient.trim());
+      if (result.status === "sent") {
+        addToast(`Test email sent to ${emailTestRecipient}`, "success");
+      } else {
+        addToast(`Email test failed: ${result.error}`, "error");
+      }
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : "Email test failed", "error");
+    } finally {
+      setEmailTesting(false);
     }
   }
 
@@ -379,6 +456,140 @@ export function AlertsSetup() {
           {error}
         </div>
       )}
+
+      {/* ── Email Server Config ─────────────────────────────────────── */}
+      <div className="bg-surface border border-white/10 rounded-xl">
+        <button
+          onClick={() => setEmailExpanded(!emailExpanded)}
+          className="w-full flex items-center justify-between px-5 py-4 text-left"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-base">&#9993;</span>
+            <div>
+              <h3 className="text-sm font-semibold text-primary">Email Server (SMTP)</h3>
+              <p className="text-xs text-secondary/60 mt-0.5">
+                {emailConfig?.is_configured
+                  ? `Configured: ${emailConfig.smtp_host}:${emailConfig.smtp_port}`
+                  : "Not configured -- required for email alerts"}
+              </p>
+            </div>
+          </div>
+          <span className="text-secondary text-xs">{emailExpanded ? "\u25B2" : "\u25BC"}</span>
+        </button>
+
+        {emailExpanded && (
+          <div className="px-5 pb-5 border-t border-white/10 pt-4 flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-secondary/60">SMTP Host</label>
+                <input
+                  type="text"
+                  value={emailForm.smtp_host}
+                  onChange={(e) => setEmailForm((f) => ({ ...f, smtp_host: e.target.value }))}
+                  placeholder="smtp.gmail.com"
+                  className="px-3 py-2.5 rounded-lg bg-background border border-white/10 text-sm text-primary placeholder:text-secondary/40 focus:outline-none focus:border-primary/60 transition-colors"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-secondary/60">Port</label>
+                <input
+                  type="number"
+                  value={emailForm.smtp_port}
+                  onChange={(e) => setEmailForm((f) => ({ ...f, smtp_port: parseInt(e.target.value) || 587 }))}
+                  className="px-3 py-2.5 rounded-lg bg-background border border-white/10 text-sm text-primary focus:outline-none focus:border-primary/60 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-secondary/60">Username</label>
+                <input
+                  type="text"
+                  value={emailForm.smtp_username}
+                  onChange={(e) => setEmailForm((f) => ({ ...f, smtp_username: e.target.value }))}
+                  placeholder="user@gmail.com"
+                  className="px-3 py-2.5 rounded-lg bg-background border border-white/10 text-sm text-primary placeholder:text-secondary/40 focus:outline-none focus:border-primary/60 transition-colors"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-secondary/60">
+                  Password {emailConfig?.is_configured && <span className="text-secondary/40">(leave blank to keep current)</span>}
+                </label>
+                <input
+                  type="password"
+                  value={emailForm.smtp_password}
+                  onChange={(e) => setEmailForm((f) => ({ ...f, smtp_password: e.target.value }))}
+                  placeholder={emailConfig?.is_configured ? "********" : "App password or SMTP password"}
+                  className="px-3 py-2.5 rounded-lg bg-background border border-white/10 text-sm text-primary placeholder:text-secondary/40 focus:outline-none focus:border-primary/60 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-secondary/60">From Address</label>
+                <input
+                  type="text"
+                  value={emailForm.from_address}
+                  onChange={(e) => setEmailForm((f) => ({ ...f, from_address: e.target.value }))}
+                  placeholder="alerts@aeronet.local"
+                  className="px-3 py-2.5 rounded-lg bg-background border border-white/10 text-sm text-primary placeholder:text-secondary/40 focus:outline-none focus:border-primary/60 transition-colors"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-secondary/60">From Name</label>
+                <input
+                  type="text"
+                  value={emailForm.from_name}
+                  onChange={(e) => setEmailForm((f) => ({ ...f, from_name: e.target.value }))}
+                  placeholder="AeroNet OS"
+                  className="px-3 py-2.5 rounded-lg bg-background border border-white/10 text-sm text-primary placeholder:text-secondary/40 focus:outline-none focus:border-primary/60 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={emailForm.use_tls}
+                onChange={(e) => setEmailForm((f) => ({ ...f, use_tls: e.target.checked }))}
+                className="rounded border-white/20"
+              />
+              <label className="text-xs text-secondary">Use STARTTLS</label>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2 border-t border-white/5">
+              <button
+                onClick={handleEmailSave}
+                disabled={emailSaving}
+                className="px-4 py-2 rounded-lg text-sm bg-primary/90 hover:bg-primary text-white transition-colors disabled:opacity-50"
+              >
+                {emailSaving ? "Saving..." : "Save SMTP Settings"}
+              </button>
+
+              {emailConfig?.is_configured && (
+                <div className="flex items-center gap-2 ml-auto">
+                  <input
+                    type="email"
+                    value={emailTestRecipient}
+                    onChange={(e) => setEmailTestRecipient(e.target.value)}
+                    placeholder="test@example.com"
+                    className="px-3 py-2 rounded-lg bg-background border border-white/10 text-xs text-primary placeholder:text-secondary/40 focus:outline-none focus:border-primary/60 transition-colors w-52"
+                  />
+                  <button
+                    onClick={handleEmailTest}
+                    disabled={emailTesting}
+                    className="px-3 py-2 rounded-lg text-xs border border-white/10 text-secondary hover:text-primary hover:bg-white/5 transition-colors disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {emailTesting ? "Sending..." : "Send Test"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Contact cards */}
       {contacts.length === 0 ? (
@@ -570,9 +781,9 @@ export function AlertsSetup() {
                       </div>
                     )}
 
-                    {ch.channel_type === "email" && (
+                    {ch.channel_type === "email" && !emailConfig?.is_configured && (
                       <div className="bg-blue-900/20 border border-blue-700/30 rounded-lg px-3 py-2 text-xs text-blue-300/90">
-                        Email dispatch is not yet implemented. SMTP configuration is required (future work).
+                        Email requires SMTP configuration. Set it up in the Email Server section above.
                       </div>
                     )}
 

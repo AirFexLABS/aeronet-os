@@ -133,6 +133,18 @@ export interface TestResult {
   error: string | null;
 }
 
+export interface EmailConfig {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password: string;
+  from_address: string;
+  from_name: string;
+  use_tls: boolean;
+  is_configured: boolean;
+  updated_at: string;
+}
+
 // ── Vault types ──────────────────────────────────────────────────────────
 
 export type CredentialType =
@@ -274,5 +286,18 @@ export const api = {
       request<void>(`/alert-contacts/${contactId}/channels/${channelId}`, { method: "DELETE" }),
     test: (id: string) =>
       request<{ results: TestResult[] }>(`/alert-contacts/${id}/test`, { method: "POST" }),
+  },
+  emailConfig: {
+    get: () => request<EmailConfig>("/email-config"),
+    update: (data: Omit<EmailConfig, "is_configured" | "updated_at">) =>
+      request<{ status: string }>("/email-config", {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    test: (recipient: string) =>
+      request<{ status: string; recipient?: string; error?: string }>(
+        `/email-config/test?recipient=${encodeURIComponent(recipient)}`,
+        { method: "POST" }
+      ),
   },
 };

@@ -429,6 +429,23 @@ async def test_contact(
         "WHERE contact_id = $1::uuid AND is_active = TRUE", contact_id,
     )
 
+    # Load SMTP config for email channel dispatch
+    email_smtp = {}
+    email_row = await pool.fetchrow("SELECT * FROM email_config WHERE id = 1 AND is_configured = TRUE")
+    if email_row:
+        try:
+            email_smtp = {
+                "smtp_host": email_row["smtp_host"],
+                "smtp_port": email_row["smtp_port"],
+                "smtp_username": decrypt_pii(email_row["smtp_username"]) if email_row["smtp_username"] else "",
+                "smtp_password": decrypt_pii(email_row["smtp_password"]) if email_row["smtp_password"] else "",
+                "from_address": email_row["from_address"],
+                "from_name": email_row["from_name"],
+                "use_tls": email_row["use_tls"],
+            }
+        except Exception:
+            pass
+
     results = []
     for ch in channels:
         try:
@@ -443,6 +460,10 @@ async def test_contact(
                 "whatsapp_use_separate_sender": ch["whatsapp_use_separate_sender"],
                 "whatsapp_sender_number": sender,
             }
+            # Inject SMTP config for email channel
+            if ch["channel_type"] == "email":
+                payload.update(email_smtp)
+
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(f"{NOTIFIER_URL}/notify/dispatch", json=payload)
                 if resp.status_code < 300:
@@ -455,3 +476,131 @@ async def test_contact(
 
     await _audit_log("CONTACT_TEST_SENT", current_user.sub, contact_id, str(results))
     return {"results": results}
+
+
+# ── Email Config Endpoints ────────────────────────────────────────────────
+
+class EmailConfigUpdate(BaseModel):
+    smtp_host: str
+    smtp_port: int = 587
+    smtp_username: str
+    smtp_password: str          # plaintext in request, encrypted at rest
+    from_address: str
+    from_name: str = "AeroNet OS"
+    use_tls: bool = True
+
+
+class EmailConfigResponse(BaseModel):
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str          # masked
+    smtp_password: str          # always "********"
+    from_address: str
+    from_name: str
+    use_tls: bool
+    is_configured: bool
+    updated_at: datetime
+
+
+@router.get("/email-config")
+async def get_email_config(
+    current_user: Annotated[TokenPayload, Depends(require_role(Role.ADMIN))],
+):
+    pool = await db.get_pool()
+    row = await pool.fetchrow("SELECT * FROM email_config WHERE id = 1")
+    if row is None:
+        return EmailConfigResponse(
+            smtp_host="", smtp_port=587, smtp_username="", smtp_password="",
+            from_address="", from_name="AeroNet OS", use_tls=True,
+            is_configured=False, updated_at=datetime.now(),
+        ).model_dump(mode="json")
+
+    # Decrypt username for masked display
+    username = ""
+    if row["smtp_username"]:
+        try:
+            username = decrypt_pii(row["smtp_username"])
+        except Exception:
+            username = "***"
+
+    return EmailConfigResponse(
+        smtp_host=row["smtp_host"],
+        smtp_port=row["smtp_port"],
+        smtp_username=username,
+        smtp_password="********" if row["is_configured"] else "",
+        from_address=row["from_address"],
+        from_name=row["from_name"],
+        use_tls=row["use_tls"],
+        is_configured=row["is_configured"],
+        updated_at=row["updated_at"],
+    ).model_dump(mode="json")
+
+
+@router.put("/email-config")
+async def update_email_config(
+    body: EmailConfigUpdate,
+    request: Request,
+    current_user: Annotated[TokenPayload, Depends(require_role(Role.ADMIN))],
+):
+    pool = await db.get_pool()
+    encrypted_username = encrypt_pii(body.smtp_username) if body.smtp_username else ""
+    encrypted_password = encrypt_pii(body.smtp_password) if body.smtp_password else ""
+
+    await pool.execute(
+        "UPDATE email_config SET "
+        "smtp_host = $1, smtp_port = $2, smtp_username = $3, smtp_password = $4, "
+        "from_address = $5, from_name = $6, use_tls = $7, is_configured = TRUE "
+        "WHERE id = 1",
+        body.smtp_host, body.smtp_port, encrypted_username, encrypted_password,
+        body.from_address, body.from_name, body.use_tls,
+    )
+    await _audit_log("EMAIL_CONFIG_UPDATED", current_user.sub, "email-config")
+    return {"status": "updated"}
+
+
+@router.post("/email-config/test")
+async def test_email_config(
+    request: Request,
+    current_user: Annotated[TokenPayload, Depends(require_role(Role.ADMIN))],
+    recipient: str = "",
+):
+    """Send a test email using the stored SMTP config. Pass ?recipient=email@example.com"""
+    pool = await db.get_pool()
+    row = await pool.fetchrow("SELECT * FROM email_config WHERE id = 1")
+    if row is None or not row["is_configured"]:
+        raise HTTPException(status_code=400, detail="Email not configured yet")
+
+    if not recipient:
+        raise HTTPException(status_code=422, detail="recipient query parameter is required")
+
+    try:
+        smtp_username = decrypt_pii(row["smtp_username"]) if row["smtp_username"] else ""
+        smtp_password = decrypt_pii(row["smtp_password"]) if row["smtp_password"] else ""
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to decrypt SMTP credentials")
+
+    payload = {
+        "channel": "email",
+        "recipient": recipient,
+        "message": "AeroNet OS -- Test email notification",
+        "severity": "INFO",
+        "smtp_host": row["smtp_host"],
+        "smtp_port": row["smtp_port"],
+        "smtp_username": smtp_username,
+        "smtp_password": smtp_password,
+        "from_address": row["from_address"],
+        "from_name": row["from_name"],
+        "use_tls": row["use_tls"],
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{NOTIFIER_URL}/notify/dispatch", json=payload)
+            if resp.status_code < 300:
+                await _audit_log("EMAIL_TEST_SENT", current_user.sub, "email-config", recipient)
+                return {"status": "sent", "recipient": recipient}
+            else:
+                error = resp.json().get("detail", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
+                return {"status": "failed", "error": str(error)}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)}

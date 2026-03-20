@@ -2,9 +2,13 @@
 Dynamic dispatch endpoint — sends notifications to arbitrary recipients.
 Called by the API Gateway when dispatching alert contact test notifications.
 Reuses existing Telegram/Twilio service credentials from environment.
+Email uses SMTP settings passed in the request body from the API Gateway.
 """
 import logging
 import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from typing import Optional
 
 import httpx
@@ -40,6 +44,14 @@ class DispatchRequest(BaseModel):
     severity: str = "INFO"
     whatsapp_use_separate_sender: bool = False
     whatsapp_sender_number: Optional[str] = None
+    # SMTP fields (only used for email channel)
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = 587
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    from_address: Optional[str] = None
+    from_name: Optional[str] = "AeroNet OS"
+    use_tls: Optional[bool] = True
 
 
 @router.post("/notify/dispatch")
@@ -51,7 +63,7 @@ async def dispatch(req: DispatchRequest):
     elif req.channel == "whatsapp":
         return await _send_whatsapp(req)
     elif req.channel == "email":
-        raise HTTPException(status_code=501, detail="Email dispatch not yet implemented. Add SMTP settings to enable.")
+        return await _send_email(req)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown channel: {req.channel}")
 
@@ -123,3 +135,58 @@ async def _send_whatsapp(req: DispatchRequest) -> dict:
         return {"status": "sent", "channel": "whatsapp"}
     except TwilioRestException as e:
         raise HTTPException(status_code=502, detail=f"Twilio WhatsApp error: {e}")
+
+
+async def _send_email(req: DispatchRequest) -> dict:
+    if not req.smtp_host or not req.from_address:
+        raise HTTPException(
+            status_code=503,
+            detail="Email not configured -- SMTP settings required. Configure in Alerts Setup > Email Server.",
+        )
+
+    emoji = SEVERITY_EMOJI.get(req.severity, "")
+    subject = f"{emoji} AeroNet OS [{req.severity}] Alert Notification"
+
+    html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #0A0F1E; color: #F9FAFB; padding: 20px; border-radius: 8px;">
+            <h2 style="color: #00A3E0; margin-top: 0;">AeroNet OS Alert</h2>
+            <p style="color: #9CA3AF; font-size: 12px;">Severity: <strong style="color: #F9FAFB;">{req.severity}</strong></p>
+            <div style="background: #111827; padding: 16px; border-radius: 6px; margin-top: 12px;">
+                <p style="color: #F9FAFB; margin: 0; white-space: pre-wrap;">{req.message}</p>
+            </div>
+            <p style="color: #9CA3AF; font-size: 11px; margin-top: 16px;">
+                Sent by AeroNet OS Notifier
+            </p>
+        </div>
+    </div>
+    """
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"{req.from_name} <{req.from_address}>" if req.from_name else req.from_address
+    msg["To"] = req.recipient
+    msg.attach(MIMEText(req.message, "plain"))
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        if req.use_tls:
+            server = smtplib.SMTP(req.smtp_host, req.smtp_port, timeout=15)
+            server.starttls()
+        else:
+            server = smtplib.SMTP(req.smtp_host, req.smtp_port, timeout=15)
+
+        if req.smtp_username and req.smtp_password:
+            server.login(req.smtp_username, req.smtp_password)
+
+        server.sendmail(req.from_address, [req.recipient], msg.as_string())
+        server.quit()
+        logger.info(f"Email dispatched to={req.recipient} via {req.smtp_host}")
+        return {"status": "sent", "channel": "email"}
+
+    except smtplib.SMTPAuthenticationError as e:
+        raise HTTPException(status_code=502, detail=f"SMTP authentication failed: {e}")
+    except smtplib.SMTPException as e:
+        raise HTTPException(status_code=502, detail=f"SMTP error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Email send failed: {e}")
