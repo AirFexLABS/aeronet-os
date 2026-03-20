@@ -10,6 +10,7 @@ import { Topology } from "./pages/Topology";
 import { Alerts } from "./pages/Alerts";
 import { Discovery } from "./pages/Discovery";
 import { Vault } from "./pages/Vault";
+import { AlertsSetup } from "./pages/AlertsSetup";
 import { useTheme } from "./hooks/useTheme";
 import { useTokenRefresh } from "./hooks/useTokenRefresh";
 
@@ -34,6 +35,7 @@ function AppInner() {
         <Route path="alerts" element={<Alerts />} />
         <Route path="discovery" element={<Discovery />} />
         <Route path="vault" element={<Vault />} />
+        <Route path="alerts-setup" element={<AlertsSetup />} />
       </Route>
     </Routes>
   );

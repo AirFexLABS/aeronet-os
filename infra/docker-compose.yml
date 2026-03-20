@@ -132,6 +132,8 @@ services:
     environment:
       DATABASE_URL: postgresql://aeronet:${POSTGRES_PASSWORD}@postgres:5432/aeronet?sslmode=disable
       ENROLLER_URL: http://enroller:8002
+      NOTIFIER_URL: http://notifier:8001
+      ALERT_CONTACTS_ENCRYPTION_KEY: ${ALERT_CONTACTS_ENCRYPTION_KEY:-}
     networks:
       - aeronet-internal
     depends_on:

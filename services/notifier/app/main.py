@@ -12,6 +12,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.models import AlertPayload, GrafanaWebhookPayload
 from app.telegram_handler import send_telegram
 from app.twilio_handler import send_sms
+from app.dispatch import router as dispatch_router
 from app.db import get_pool
 
 logging.basicConfig(
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AeroNet Notifier")
 Instrumentator().instrument(app).expose(app)
+app.include_router(dispatch_router)
 
 
 @app.get("/health")

@@ -10,7 +10,8 @@ const NAV = [
   { to: "/alerts", label: "Alerts", icon: "\u25ce" },
   { to: "/discovery", label: "Discovery", icon: "\u2295" },
   { to: "/vault", label: "Vault", icon: "\u{1F510}" },
-];
+  { to: "/alerts-setup", label: "Alerts Setup", icon: "\u{1F514}", adminOnly: true },
+] as const;
 
 function roleLabel(role: string): string {
   switch (role) {
@@ -43,7 +44,7 @@ export function Sidebar() {
         </span>
       </div>
       <nav className="flex-1 py-4 flex flex-col gap-1 px-3">
-        {NAV.map(({ to, label, icon }) => (
+        {NAV.filter((item) => !("adminOnly" in item && item.adminOnly) || user?.role === "admin").map(({ to, label, icon }) => (
           <NavLink
             key={to}
             to={to}

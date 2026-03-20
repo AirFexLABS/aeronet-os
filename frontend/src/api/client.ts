@@ -89,6 +89,50 @@ export interface DeviceRegistration {
   status:        string;
 }
 
+// ── Alert contact types ──────────────────────────────────────────────────
+
+export type ChannelType = "email" | "sms" | "whatsapp" | "telegram";
+export type MinSeverity = "INFO" | "WARNING" | "CRITICAL";
+
+export interface AlertChannel {
+  id: string;
+  channel_type: ChannelType;
+  recipient_value: string; // masked
+  min_severity: MinSeverity;
+  whatsapp_use_separate_sender: boolean;
+  is_active: boolean;
+}
+
+export interface AlertContact {
+  id: string;
+  display_name: string;
+  is_active: boolean;
+  channels: AlertChannel[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChannelCreatePayload {
+  channel_type: ChannelType;
+  recipient_value: string;
+  min_severity: MinSeverity;
+  whatsapp_use_separate_sender: boolean;
+  whatsapp_sender_number?: string;
+}
+
+export interface ContactCreatePayload {
+  display_name: string;
+  is_active: boolean;
+  channels: ChannelCreatePayload[];
+}
+
+export interface TestResult {
+  channel_id: string;
+  channel_type: ChannelType;
+  success: boolean;
+  error: string | null;
+}
+
 // ── Vault types ──────────────────────────────────────────────────────────
 
 export type CredentialType =
@@ -200,5 +244,35 @@ export const api = {
       }),
     audit: (id: string) =>
       request<VaultAuditEntry[]>(`/vault/${id}/audit`),
+  },
+  alertContacts: {
+    list: () => request<AlertContact[]>("/alert-contacts"),
+    get: (id: string) => request<AlertContact>(`/alert-contacts/${id}`),
+    create: (data: ContactCreatePayload) =>
+      request<AlertContact>("/alert-contacts", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: { display_name?: string; is_active?: boolean }) =>
+      request<AlertContact>(`/alert-contacts/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      request<void>(`/alert-contacts/${id}`, { method: "DELETE" }),
+    addChannel: (contactId: string, data: ChannelCreatePayload) =>
+      request<AlertContact>(`/alert-contacts/${contactId}/channels`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    updateChannel: (contactId: string, channelId: string, data: Record<string, unknown>) =>
+      request<AlertContact>(`/alert-contacts/${contactId}/channels/${channelId}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    deleteChannel: (contactId: string, channelId: string) =>
+      request<void>(`/alert-contacts/${contactId}/channels/${channelId}`, { method: "DELETE" }),
+    test: (id: string) =>
+      request<{ results: TestResult[] }>(`/alert-contacts/${id}/test`, { method: "POST" }),
   },
 };
