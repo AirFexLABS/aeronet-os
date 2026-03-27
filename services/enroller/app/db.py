@@ -27,7 +27,8 @@ async def get_device_by_serial(serial_number: str) -> asyncpg.Record | None:
     """Fetch a single device row by serial_number."""
     pool = await get_pool()
     return await pool.fetchrow(
-        "SELECT serial_number, hostname, ip_address, device_type, site_id, status "
+        "SELECT serial_number, hostname, ip_address, mac_address, device_type, "
+        "vendor, os_guess, site_id, status "
         "FROM devices WHERE serial_number = $1",
         serial_number,
     )
@@ -40,23 +41,40 @@ async def upsert_device(
     device_type: str = "unknown",
     site_id: str = "default",
     status: str = "active",
+    mac_address: str | None = None,
+    vendor: str = "unknown",
+    os_guess: str = "unknown",
 ) -> None:
     """Insert or update a device record."""
     pool = await get_pool()
     await pool.execute(
         """
-        INSERT INTO devices (serial_number, hostname, ip_address, device_type, site_id, status, last_seen)
-        VALUES ($1, $2, $3::inet, $4, $5, $6, NOW())
+        INSERT INTO devices (serial_number, hostname, ip_address, mac_address,
+                             device_type, vendor, os_guess, site_id, status, last_seen)
+        VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, NOW())
         ON CONFLICT (serial_number) DO UPDATE SET
-            hostname   = EXCLUDED.hostname,
-            ip_address = EXCLUDED.ip_address,
-            status     = EXCLUDED.status,
-            last_seen  = NOW()
+            hostname    = EXCLUDED.hostname,
+            ip_address  = EXCLUDED.ip_address,
+            mac_address = COALESCE(EXCLUDED.mac_address, devices.mac_address),
+            device_type = CASE WHEN EXCLUDED.device_type = 'unknown'
+                               THEN devices.device_type
+                               ELSE EXCLUDED.device_type END,
+            vendor      = CASE WHEN EXCLUDED.vendor = 'unknown'
+                               THEN devices.vendor
+                               ELSE EXCLUDED.vendor END,
+            os_guess    = CASE WHEN EXCLUDED.os_guess = 'unknown'
+                               THEN devices.os_guess
+                               ELSE EXCLUDED.os_guess END,
+            status      = EXCLUDED.status,
+            last_seen   = NOW()
         """,
         serial_number,
         hostname,
         ip_address,
+        mac_address,
         device_type,
+        vendor,
+        os_guess,
         site_id,
         status,
     )

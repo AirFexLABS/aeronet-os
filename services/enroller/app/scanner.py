@@ -37,11 +37,14 @@ OUI_MAP = {
     "00:1e:c9": "Dell",
 }
 
-AP_VENDORS = {"Cisco", "Cisco Aironet", "Ubiquiti", "Aruba", "Juniper Mist", "Ruckus"}
+AP_VENDORS = {"Cisco Aironet", "Ubiquiti", "Aruba", "Juniper Mist", "Ruckus"}
+
+NETWORK_VENDORS = {"Cisco", "Cisco Systems", "Cisco Aironet", "Juniper", "Juniper Mist",
+                   "HP", "Dell", "Aruba", "Ubiquiti", "Ruckus"}
 
 NMAP_ARGUMENTS = os.getenv(
     "NMAP_ARGUMENTS",
-    "-sS -O --osscan-guess -T4 --open",
+    "-sS -sV -sC -O --osscan-guess -T4 --open",
 )
 
 
@@ -96,6 +99,9 @@ class NmapScanner:
                 if host["tcp"][p]["state"] == "open"
             ]
 
+            vendor = _lookup_vendor(mac, host.get("vendor", {}))
+            device_type = _classify_device(hostname, ports, vendor, os_guess)
+
             devices.append(
                 {
                     "ip": ip,
@@ -104,9 +110,12 @@ class NmapScanner:
                     "mac": mac,
                     "os_guess": os_guess,
                     "open_ports": ports,
+                    "vendor": vendor,
+                    "device_type": device_type,
                 }
             )
-            logger.debug(f"Discovered: {ip} serial={serial} hostname={hostname}")
+            logger.debug(f"Discovered: {ip} serial={serial} hostname={hostname} "
+                         f"vendor={vendor} type={device_type}")
 
         logger.info(f"Scan complete — {len(devices)} devices found")
         return devices
@@ -140,8 +149,14 @@ class NmapScanner:
         return "unknown"
 
 
-def _lookup_vendor(mac: str) -> str:
-    """Resolve vendor from MAC OUI prefix using the static OUI_MAP."""
+def _lookup_vendor(mac: str, nmap_vendor: dict | None = None) -> str:
+    """Resolve vendor from nmap's vendor dict first, then static OUI_MAP fallback."""
+    if nmap_vendor:
+        # nmap returns {mac_addr: vendor_name} from its full OUI database
+        for vendor_name in nmap_vendor.values():
+            if vendor_name:
+                return vendor_name
+
     if not mac:
         return "unknown"
     prefix = mac.lower()[:8]  # first 3 octets e.g. "00:0b:86"
@@ -152,9 +167,11 @@ def _classify_device(
     hostname: str,
     open_ports: list[int],
     vendor: str,
+    os_guess: str = "",
 ) -> str:
     """Classify a device as router/switch/ap/server/printer/unknown."""
     hn = hostname.lower()
+    os_lower = os_guess.lower() if os_guess else ""
 
     # Hostname-based classification (highest priority)
     if any(tag in hn for tag in ("ap", "wap", "wifi")):
@@ -170,15 +187,33 @@ def _classify_device(
     if vendor in AP_VENDORS and port_set:
         return "ap"
 
+    # OS-based classification
+    if os_lower:
+        if "switch" in os_lower or "catalyst" in os_lower:
+            return "switch"
+        if "router" in os_lower or "asr" in os_lower or "isr" in os_lower:
+            return "router"
+        if "wireless" in os_lower or "wlc" in os_lower:
+            return "ap"
+        if "printer" in os_lower or "print" in os_lower:
+            return "printer"
+        if "firewall" in os_lower or "asa" in os_lower or "pix" in os_lower:
+            return "firewall"
+
     # Port-based heuristics
     has_ssh = 22 in port_set
     has_telnet = 23 in port_set
     has_http = bool(port_set & {80, 443})
     has_snmp = 161 in port_set
+    is_network_vendor = vendor in NETWORK_VENDORS
 
     if has_ssh and has_telnet and not has_http:
         return "router"
+    if (has_telnet or has_ssh) and has_snmp and is_network_vendor:
+        return "switch"
     if has_ssh and has_snmp:
+        return "switch"
+    if has_telnet and has_snmp:
         return "switch"
     if has_http and not has_ssh and not has_telnet:
         return "server"
@@ -288,7 +323,7 @@ async def fingerprint_device(ip: str) -> dict:
     device information including vendor, device class, and confidence score.
     """
     scanner = NmapScanner(
-        arguments="-sS -O --osscan-guess -sU -p U:161 -T4 --open",
+        arguments="-sS -sV -sC -O --osscan-guess -sU -p U:161 -T4 --open",
     )
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
@@ -324,8 +359,8 @@ async def fingerprint_device(ip: str) -> dict:
     ]
     open_ports = sorted(set(tcp_ports + udp_ports))
 
-    vendor = _lookup_vendor(mac)
-    device_class = _classify_device(hostname, open_ports, vendor)
+    vendor = _lookup_vendor(mac, host.get("vendor", {}))
+    device_class = _classify_device(hostname, open_ports, vendor, os_guess)
 
     # SNMP description from host scripts
     snmp_desc = None

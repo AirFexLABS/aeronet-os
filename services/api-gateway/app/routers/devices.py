@@ -26,14 +26,16 @@ async def list_devices(
     pool = await db.get_pool()
     if current_user.site_id is not None:
         rows = await pool.fetch(
-            "SELECT serial_number, hostname, ip_address::text, device_type, "
+            "SELECT serial_number, hostname, ip_address::text, mac_address, "
+            "device_type, vendor, os_guess, "
             "site_id, status, last_seen::text FROM devices WHERE site_id = $1 "
             "ORDER BY serial_number",
             current_user.site_id,
         )
     else:
         rows = await pool.fetch(
-            "SELECT serial_number, hostname, ip_address::text, device_type, "
+            "SELECT serial_number, hostname, ip_address::text, mac_address, "
+            "device_type, vendor, os_guess, "
             "site_id, status, last_seen::text FROM devices ORDER BY serial_number"
         )
     return [dict(r) for r in rows]
@@ -50,7 +52,8 @@ async def get_device(
 ):
     pool = await db.get_pool()
     row = await pool.fetchrow(
-        "SELECT serial_number, hostname, ip_address::text, device_type, "
+        "SELECT serial_number, hostname, ip_address::text, mac_address, "
+        "device_type, vendor, os_guess, "
         "site_id, status, last_seen::text FROM devices WHERE serial_number = $1",
         serial,
     )
@@ -71,13 +74,16 @@ async def create_device(device: DeviceCreate):
     pool = await db.get_pool()
     try:
         await pool.execute(
-            "INSERT INTO devices (serial_number, hostname, ip_address, device_type, "
-            "site_id, status, last_seen) "
-            "VALUES ($1, $2, $3::inet, $4, $5, $6, NOW())",
+            "INSERT INTO devices (serial_number, hostname, ip_address, mac_address, "
+            "device_type, vendor, os_guess, site_id, status, last_seen) "
+            "VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, NOW())",
             device.serial_number,
             device.hostname,
             device.ip_address,
+            device.mac_address,
             device.device_type,
+            device.vendor,
+            device.os_guess,
             device.site_id,
             device.status,
         )

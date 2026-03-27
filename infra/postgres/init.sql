@@ -8,7 +8,10 @@ CREATE TABLE devices (
     serial_number VARCHAR(64) PRIMARY KEY,
     hostname      VARCHAR(255) NOT NULL,
     ip_address    INET NOT NULL,
+    mac_address   VARCHAR(17),
     device_type   VARCHAR(64) NOT NULL,
+    vendor        VARCHAR(128) NOT NULL DEFAULT 'unknown',
+    os_guess      VARCHAR(255) NOT NULL DEFAULT 'unknown',
     site_id       VARCHAR(64) NOT NULL,
     status        VARCHAR(32) NOT NULL DEFAULT 'unknown',
     last_seen     TIMESTAMPTZ
