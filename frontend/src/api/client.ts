@@ -246,6 +246,34 @@ export interface FlattenedField {
   type: string;
 }
 
+export interface FieldMappingTemplate {
+  id: number;
+  name: string;
+  description: string | null;
+  vendor: string;
+  scope: string;
+  site_group_id: string | null;
+  created_by: string;
+  field_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateFieldMapping {
+  id: number;
+  template_id: number;
+  json_path: string;
+  display_name: string;
+  cmdb_column: string | null;
+  grafana_label: string | null;
+  data_type: string;
+  created_at: string;
+}
+
+export interface FieldMappingTemplateDetail extends FieldMappingTemplate {
+  fields: TemplateFieldMapping[];
+}
+
 export interface ExecuteResult {
   raw: unknown;
   fields: FlattenedField[];
@@ -474,6 +502,49 @@ export const api = {
         ),
       delete: (id: number) =>
         request<void>(`/vendor-field-mappings/${id}`, { method: "DELETE" }),
+    },
+    templates: {
+      list: () => request<FieldMappingTemplate[]>("/field-templates"),
+      create: (data: {
+        name: string;
+        description?: string;
+        vendor: string;
+        scope?: string;
+        site_group_id?: string;
+      }) =>
+        request<FieldMappingTemplate>("/field-templates", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+      get: (id: number) =>
+        request<FieldMappingTemplateDetail>(`/field-templates/${id}`),
+      update: (id: number, data: { name?: string; description?: string; scope?: string; site_group_id?: string }) =>
+        request<FieldMappingTemplate>(`/field-templates/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(data),
+        }),
+      delete: (id: number) =>
+        request<void>(`/field-templates/${id}`, { method: "DELETE" }),
+      addField: (templateId: number, data: FieldMappingCreatePayload) =>
+        request<TemplateFieldMapping>(`/field-templates/${templateId}/fields`, {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+      deleteField: (fieldId: number) =>
+        request<void>(`/field-templates/fields/${fieldId}`, { method: "DELETE" }),
+      apply: (templateId: number, endpointId: number) =>
+        request<{ applied: number; skipped: number }>(
+          `/field-templates/${templateId}/apply/${endpointId}`,
+          { method: "POST" }
+        ),
+      saveAs: (
+        endpointId: number,
+        data: { name: string; description?: string; scope?: string; site_group_id?: string }
+      ) =>
+        request<FieldMappingTemplate>(
+          `/vendor-endpoints/${endpointId}/save-as-template`,
+          { method: "POST", body: JSON.stringify(data) }
+        ),
     },
   },
   emailConfig: {

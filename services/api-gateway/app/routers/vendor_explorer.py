@@ -48,6 +48,36 @@ class FieldMappingCreate(BaseModel):
     data_type: str = "string"
 
 
+class TemplateCreate(BaseModel):
+    name: str
+    description: str | None = None
+    vendor: str
+    scope: str = "vendor"
+    site_group_id: str | None = None
+
+
+class TemplateUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    scope: str | None = None
+    site_group_id: str | None = None
+
+
+class TemplateFieldCreate(BaseModel):
+    json_path: str
+    display_name: str
+    cmdb_column: str | None = None
+    grafana_label: str | None = None
+    data_type: str = "string"
+
+
+class SaveAsTemplateBody(BaseModel):
+    name: str
+    description: str | None = None
+    scope: str = "vendor"
+    site_group_id: str | None = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 def _flatten_json(obj: Any, prefix: str = "$") -> list[dict]:
@@ -386,3 +416,280 @@ async def delete_field_mapping(mapping_id: int):
     result = await pool.execute("DELETE FROM vendor_field_mappings WHERE id = $1", mapping_id)
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Field mapping not found")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Field Mapping Templates
+# ══════════════════════════════════════════════════════════════════════════
+
+
+# ── GET /field-templates ────────────────────────────────────────────────
+
+@router.get(
+    "/field-templates",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def list_field_templates():
+    pool = await db.get_pool()
+    rows = await pool.fetch(
+        "SELECT t.id, t.name, t.description, t.vendor, t.scope, t.site_group_id, "
+        "t.created_by, t.created_at::text, t.updated_at::text, "
+        "(SELECT COUNT(*) FROM template_field_mappings WHERE template_id = t.id) AS field_count "
+        "FROM field_mapping_templates t ORDER BY t.id"
+    )
+    return [dict(r) for r in rows]
+
+
+# ── POST /field-templates ───────────────────────────────────────────────
+
+@router.post(
+    "/field-templates",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def create_field_template(body: TemplateCreate):
+    pool = await db.get_pool()
+    row = await pool.fetchrow(
+        "INSERT INTO field_mapping_templates (name, description, vendor, scope, site_group_id) "
+        "VALUES ($1, $2, $3, $4, $5) "
+        "RETURNING id, name, description, vendor, scope, site_group_id, "
+        "created_by, created_at::text, updated_at::text",
+        body.name, body.description, body.vendor, body.scope, body.site_group_id,
+    )
+    result = dict(row)
+    result["field_count"] = 0
+    return result
+
+
+# ── GET /field-templates/{id} ──────────────────────────────────────────
+
+@router.get(
+    "/field-templates/{template_id}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def get_field_template(template_id: int):
+    pool = await db.get_pool()
+    row = await pool.fetchrow(
+        "SELECT id, name, description, vendor, scope, site_group_id, "
+        "created_by, created_at::text, updated_at::text "
+        "FROM field_mapping_templates WHERE id = $1",
+        template_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+    result = dict(row)
+    fields = await pool.fetch(
+        "SELECT id, template_id, json_path, display_name, cmdb_column, "
+        "grafana_label, data_type, created_at::text "
+        "FROM template_field_mappings WHERE template_id = $1 ORDER BY id",
+        template_id,
+    )
+    result["fields"] = [dict(f) for f in fields]
+    result["field_count"] = len(fields)
+    return result
+
+
+# ── PUT /field-templates/{id} ──────────────────────────────────────────
+
+@router.put(
+    "/field-templates/{template_id}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def update_field_template(template_id: int, body: TemplateUpdate):
+    pool = await db.get_pool()
+    existing = await pool.fetchval(
+        "SELECT 1 FROM field_mapping_templates WHERE id = $1", template_id
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    updates = []
+    values = []
+    idx = 1
+    for field in ("name", "description", "scope", "site_group_id"):
+        val = getattr(body, field)
+        if val is not None:
+            updates.append(f"{field} = ${idx}")
+            values.append(val)
+            idx += 1
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    updates.append(f"updated_at = NOW()")
+    values.append(template_id)
+    query = (
+        f"UPDATE field_mapping_templates SET {', '.join(updates)} "
+        f"WHERE id = ${idx} "
+        "RETURNING id, name, description, vendor, scope, site_group_id, "
+        "created_by, created_at::text, updated_at::text"
+    )
+    row = await pool.fetchrow(query, *values)
+    result = dict(row)
+    result["field_count"] = await pool.fetchval(
+        "SELECT COUNT(*) FROM template_field_mappings WHERE template_id = $1",
+        template_id,
+    )
+    return result
+
+
+# ── DELETE /field-templates/{id} ───────────────────────────────────────
+
+@router.delete(
+    "/field-templates/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def delete_field_template(template_id: int):
+    pool = await db.get_pool()
+    result = await pool.execute(
+        "DELETE FROM field_mapping_templates WHERE id = $1", template_id
+    )
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Template not found")
+
+
+# ── POST /field-templates/{id}/fields ──────────────────────────────────
+
+@router.post(
+    "/field-templates/{template_id}/fields",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def add_template_field(template_id: int, body: TemplateFieldCreate):
+    pool = await db.get_pool()
+    exists = await pool.fetchval(
+        "SELECT 1 FROM field_mapping_templates WHERE id = $1", template_id
+    )
+    if not exists:
+        raise HTTPException(status_code=404, detail="Template not found")
+    row = await pool.fetchrow(
+        "INSERT INTO template_field_mappings "
+        "(template_id, json_path, display_name, cmdb_column, grafana_label, data_type) "
+        "VALUES ($1, $2, $3, $4, $5, $6) "
+        "RETURNING id, template_id, json_path, display_name, cmdb_column, "
+        "grafana_label, data_type, created_at::text",
+        template_id, body.json_path, body.display_name,
+        body.cmdb_column, body.grafana_label, body.data_type,
+    )
+    return dict(row)
+
+
+# ── DELETE /field-templates/fields/{field_id} ──────────────────────────
+
+@router.delete(
+    "/field-templates/fields/{field_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def delete_template_field(field_id: int):
+    pool = await db.get_pool()
+    result = await pool.execute(
+        "DELETE FROM template_field_mappings WHERE id = $1", field_id
+    )
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Template field not found")
+
+
+# ── POST /field-templates/{id}/apply/{endpoint_id} ─────────────────────
+
+@router.post(
+    "/field-templates/{template_id}/apply/{endpoint_id}",
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def apply_template_to_endpoint(template_id: int, endpoint_id: int):
+    pool = await db.get_pool()
+    tpl = await pool.fetchval(
+        "SELECT 1 FROM field_mapping_templates WHERE id = $1", template_id
+    )
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    ep = await pool.fetchval(
+        "SELECT 1 FROM vendor_endpoints WHERE id = $1", endpoint_id
+    )
+    if not ep:
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+
+    # Get template fields
+    tpl_fields = await pool.fetch(
+        "SELECT json_path, display_name, cmdb_column, grafana_label, data_type "
+        "FROM template_field_mappings WHERE template_id = $1",
+        template_id,
+    )
+
+    # Get existing endpoint mappings to skip duplicates
+    existing = await pool.fetch(
+        "SELECT json_path FROM vendor_field_mappings WHERE vendor_endpoint_id = $1",
+        endpoint_id,
+    )
+    existing_paths = {r["json_path"] for r in existing}
+
+    inserted = 0
+    for f in tpl_fields:
+        if f["json_path"] in existing_paths:
+            continue
+        await pool.execute(
+            "INSERT INTO vendor_field_mappings "
+            "(vendor_endpoint_id, json_path, display_name, cmdb_column, grafana_label, data_type) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            endpoint_id, f["json_path"], f["display_name"],
+            f["cmdb_column"], f["grafana_label"], f["data_type"],
+        )
+        inserted += 1
+
+    return {"applied": inserted, "skipped": len(tpl_fields) - inserted}
+
+
+# ── POST /vendor-endpoints/{id}/save-as-template ───────────────────────
+
+@router.post(
+    "/vendor-endpoints/{endpoint_id}/save-as-template",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def save_endpoint_as_template(endpoint_id: int, body: SaveAsTemplateBody):
+    pool = await db.get_pool()
+
+    # Get the endpoint and its vendor
+    ep_row = await pool.fetchrow(
+        "SELECT ve.id, vc.vendor FROM vendor_endpoints ve "
+        "JOIN vendor_configs vc ON ve.vendor_config_id = vc.id "
+        "WHERE ve.id = $1",
+        endpoint_id,
+    )
+    if not ep_row:
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+
+    # Get current field mappings for this endpoint
+    mappings = await pool.fetch(
+        "SELECT json_path, display_name, cmdb_column, grafana_label, data_type "
+        "FROM vendor_field_mappings WHERE vendor_endpoint_id = $1 ORDER BY id",
+        endpoint_id,
+    )
+    if not mappings:
+        raise HTTPException(
+            status_code=400, detail="Endpoint has no saved field mappings to template"
+        )
+
+    # Create the template
+    tpl = await pool.fetchrow(
+        "INSERT INTO field_mapping_templates "
+        "(name, description, vendor, scope, site_group_id) "
+        "VALUES ($1, $2, $3, $4, $5) "
+        "RETURNING id, name, description, vendor, scope, site_group_id, "
+        "created_by, created_at::text, updated_at::text",
+        body.name, body.description, ep_row["vendor"], body.scope, body.site_group_id,
+    )
+
+    # Copy mappings into template
+    for m in mappings:
+        await pool.execute(
+            "INSERT INTO template_field_mappings "
+            "(template_id, json_path, display_name, cmdb_column, grafana_label, data_type) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            tpl["id"], m["json_path"], m["display_name"],
+            m["cmdb_column"], m["grafana_label"], m["data_type"],
+        )
+
+    result = dict(tpl)
+    result["field_count"] = len(mappings)
+    return result

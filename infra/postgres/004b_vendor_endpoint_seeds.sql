@@ -24,7 +24,8 @@ BEGIN
             (cfg_id, 'AP Location',      'GET', '/api/v1/sites/{site_id}/stats/maps', 'AP location map data'),
             (cfg_id, 'Org Inventory',    'GET', '/api/v1/orgs/{org_id}/inventory', 'Full hardware inventory for the org'),
             (cfg_id, 'Site WLANs',       'GET', '/api/v1/sites/{site_id}/wlans', 'WLAN configurations at a site'),
-            (cfg_id, 'Client Sessions',  'GET', '/api/v1/sites/{site_id}/stats/clients', 'Connected client session stats')
+            (cfg_id, 'Client Sessions',  'GET', '/api/v1/sites/{site_id}/stats/clients', 'Connected client session stats'),
+            (cfg_id, 'AP Stats with Switch Info', 'GET', '/api/v1/sites/{site_id}/stats/devices?type=ap', 'Live AP operational stats including connected switch LLDP data, client counts, radio stats, uptime, CPU, memory, port stats')
         ON CONFLICT DO NOTHING;
     END IF;
 END $$;

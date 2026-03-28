@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import {
   api,
   VendorConfig,
@@ -7,6 +7,8 @@ import {
   FlattenedField,
   ExecuteResult,
   VendorTestResult,
+  FieldMappingTemplate,
+  FieldMappingTemplateDetail,
 } from "../api/client";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
@@ -599,6 +601,19 @@ export function VendorExplorer() {
     useState<VendorEndpoint | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
 
+  /* templates */
+  const [templates, setTemplates] = useState<FieldMappingTemplate[]>([]);
+  const [showTemplatePanel, setShowTemplatePanel] = useState(false);
+  const [expandedTemplateId, setExpandedTemplateId] = useState<number | null>(null);
+  const [expandedTemplateDetail, setExpandedTemplateDetail] = useState<FieldMappingTemplateDetail | null>(null);
+  const [renamingTemplateId, setRenamingTemplateId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
+  const [saveTemplateName, setSaveTemplateName] = useState("");
+  const [saveTemplateDesc, setSaveTemplateDesc] = useState("");
+  const [saveTemplateScope, setSaveTemplateScope] = useState("vendor");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+
   /* toast */
   const [toast, setToast] = useState<{
     message: string;
@@ -688,6 +703,142 @@ export function VendorExplorer() {
       showToast(`${sites.length} sites cached`);
     }
   }
+
+  /* ── Load templates on mount ──────────────────────────────────────── */
+  useEffect(() => {
+    api.vendorExplorer.templates
+      .list()
+      .then(setTemplates)
+      .catch(() => {});
+  }, []);
+
+  /* ── Template handlers ─────────────────────────────────────────────── */
+
+  async function handleExpandTemplate(id: number) {
+    if (expandedTemplateId === id) {
+      setExpandedTemplateId(null);
+      setExpandedTemplateDetail(null);
+      return;
+    }
+    try {
+      const detail = await api.vendorExplorer.templates.get(id);
+      setExpandedTemplateId(id);
+      setExpandedTemplateDetail(detail);
+    } catch {
+      showToast("Failed to load template fields", "error");
+    }
+  }
+
+  async function handleRenameTemplate(id: number) {
+    if (!renameValue.trim()) return;
+    try {
+      const updated = await api.vendorExplorer.templates.update(id, { name: renameValue.trim() });
+      setTemplates((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      setRenamingTemplateId(null);
+      showToast("Template renamed");
+    } catch {
+      showToast("Failed to rename template", "error");
+    }
+  }
+
+  async function handleDuplicateTemplate(tpl: FieldMappingTemplate) {
+    try {
+      const detail = await api.vendorExplorer.templates.get(tpl.id);
+      const copy = await api.vendorExplorer.templates.create({
+        name: `Copy of ${tpl.name}`,
+        description: tpl.description ?? undefined,
+        vendor: tpl.vendor,
+        scope: tpl.scope,
+        site_group_id: tpl.site_group_id ?? undefined,
+      });
+      for (const f of detail.fields) {
+        await api.vendorExplorer.templates.addField(copy.id, {
+          json_path: f.json_path,
+          display_name: f.display_name,
+          cmdb_column: f.cmdb_column ?? undefined,
+          grafana_label: f.grafana_label ?? undefined,
+          data_type: f.data_type,
+        });
+      }
+      copy.field_count = detail.fields.length;
+      setTemplates((prev) => [...prev, copy]);
+      showToast("Template duplicated");
+    } catch {
+      showToast("Failed to duplicate template", "error");
+    }
+  }
+
+  async function handleDeleteTemplate(id: number) {
+    if (!confirm("Delete this template?")) return;
+    try {
+      await api.vendorExplorer.templates.delete(id);
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      if (expandedTemplateId === id) {
+        setExpandedTemplateId(null);
+        setExpandedTemplateDetail(null);
+      }
+      showToast("Template deleted");
+    } catch {
+      showToast("Failed to delete template", "error");
+    }
+  }
+
+  async function handleApplyTemplate(templateId: number) {
+    if (!selectedEndpointId) return;
+    try {
+      const result = await api.vendorExplorer.templates.apply(templateId, selectedEndpointId);
+      showToast(`Applied ${result.applied} mappings (${result.skipped} skipped)`);
+      // Refresh field mappings
+      const updated = await api.vendorExplorer.fields.list(selectedEndpointId);
+      setFieldMappings(updated);
+    } catch {
+      showToast("Failed to apply template", "error");
+    }
+  }
+
+  async function handleSaveAsTemplate() {
+    if (!selectedEndpointId || !saveTemplateName.trim()) return;
+    setSavingTemplate(true);
+    try {
+      const tpl = await api.vendorExplorer.templates.saveAs(selectedEndpointId, {
+        name: saveTemplateName.trim(),
+        description: saveTemplateDesc.trim() || undefined,
+        scope: saveTemplateScope,
+      });
+      setTemplates((prev) => [...prev, tpl]);
+      setShowSaveAsTemplate(false);
+      setSaveTemplateName("");
+      setSaveTemplateDesc("");
+      setSaveTemplateScope("vendor");
+      showToast(`Template "${tpl.name}" created with ${tpl.field_count} fields`);
+    } catch (e: unknown) {
+      showToast(
+        e instanceof Error ? e.message : "Failed to save as template",
+        "error"
+      );
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function handleAssignTemplateToEndpoint(templateId: number, endpointId: number) {
+    try {
+      const result = await api.vendorExplorer.templates.apply(templateId, endpointId);
+      showToast(`Applied ${result.applied} mappings to endpoint (${result.skipped} skipped)`);
+      // Refresh if it's the currently selected endpoint
+      if (endpointId === selectedEndpointId) {
+        const updated = await api.vendorExplorer.fields.list(endpointId);
+        setFieldMappings(updated);
+      }
+    } catch {
+      showToast("Failed to assign template", "error");
+    }
+  }
+
+  /* templates filtered for current vendor */
+  const vendorTemplates = selectedConfig
+    ? templates.filter((t) => t.vendor === selectedConfig.vendor)
+    : [];
 
   /* ── Execute logic ──────────────────────────────────────────────────── */
 
@@ -843,7 +994,7 @@ export function VendorExplorer() {
   /* ── Render ─────────────────────────────────────────────────────────── */
 
   return (
-    <div className="space-y-0 h-[calc(100vh-4rem)]">
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
       {toast && (
         <Toast
           message={toast.message}
@@ -852,13 +1003,13 @@ export function VendorExplorer() {
         />
       )}
 
-      <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
         <h1 className="text-xl font-bold text-primary">
           Vendor API Explorer
         </h1>
       </div>
 
-      <div className="flex h-[calc(100%-4rem)]">
+      <div className="flex flex-1 min-h-0">
         {/* ── Panel 1: Vendor Configs Sidebar ──────────────────────────── */}
         <div className="w-64 border-r border-white/10 flex flex-col shrink-0">
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
@@ -1243,6 +1394,22 @@ export function VendorExplorer() {
                         </p>
                       )}
                     </div>
+                    {selectedEndpointId && vendorTemplates.length > 0 && (
+                      <select
+                        className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-secondary focus:outline-none focus:ring-1 focus:ring-primary/50 shrink-0"
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) handleApplyTemplate(Number(e.target.value));
+                        }}
+                      >
+                        <option value="">Apply Template...</option>
+                        {vendorTemplates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name} ({t.field_count} fields)
+                          </option>
+                        ))}
+                      </select>
+                    )}
                     <button
                       onClick={() => setResponseTab("fields")}
                       className={`text-xs px-2 py-1 rounded transition shrink-0 ${
@@ -1341,11 +1508,53 @@ export function VendorExplorer() {
 
                 {/* ── Panel 4: Saved Field Mappings ─────────────────────── */}
                 <div className="w-80 flex flex-col overflow-hidden shrink-0">
-                  <div className="px-4 py-3 border-b border-white/10 shrink-0">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
                     <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
                       Saved Mappings
                     </span>
+                    {selectedEndpointId && fieldMappings.length > 0 && (
+                      <button
+                        onClick={() => setShowSaveAsTemplate((p) => !p)}
+                        className="text-xs text-primary hover:text-primary/80 font-medium transition"
+                      >
+                        {showSaveAsTemplate ? "Cancel" : "Save as Template"}
+                      </button>
+                    )}
                   </div>
+
+                  {/* Save as Template inline form */}
+                  {showSaveAsTemplate && selectedEndpointId && (
+                    <div className="px-3 py-3 border-b border-white/10 space-y-2 bg-white/[0.02] shrink-0">
+                      <input
+                        className={inputCls}
+                        value={saveTemplateName}
+                        onChange={(e) => setSaveTemplateName(e.target.value)}
+                        placeholder="Template name"
+                      />
+                      <input
+                        className={inputCls}
+                        value={saveTemplateDesc}
+                        onChange={(e) => setSaveTemplateDesc(e.target.value)}
+                        placeholder="Description (optional)"
+                      />
+                      <select
+                        className={inputCls}
+                        value={saveTemplateScope}
+                        onChange={(e) => setSaveTemplateScope(e.target.value)}
+                      >
+                        <option value="vendor">This Vendor</option>
+                        <option value="site_group">Site Group</option>
+                      </select>
+                      <button
+                        onClick={handleSaveAsTemplate}
+                        disabled={savingTemplate || !saveTemplateName.trim()}
+                        className="w-full px-3 py-1.5 bg-primary text-black text-xs font-medium rounded-lg hover:bg-primary/80 disabled:opacity-50 transition"
+                      >
+                        {savingTemplate ? "Saving..." : `Save ${fieldMappings.length} mappings as template`}
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex-1 overflow-auto p-3">
                     {!selectedEndpointId ? (
                       <p className="text-xs text-secondary/40 text-center py-8">
@@ -1398,6 +1607,153 @@ export function VendorExplorer() {
           )}
         </div>
       </div>
+
+      {/* ── Template Manager Panel (collapsible) ─────────────────────── */}
+      {templates.length > 0 && (
+        <div className="border-t border-white/10">
+          <button
+            onClick={() => setShowTemplatePanel((p) => !p)}
+            className="w-full flex items-center justify-between px-6 py-2.5 hover:bg-white/[0.02] transition"
+          >
+            <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
+              Field Mapping Templates ({templates.length})
+            </span>
+            <span className="text-xs text-secondary/50">
+              {showTemplatePanel ? "\u25B2" : "\u25BC"}
+            </span>
+          </button>
+
+          {showTemplatePanel && (
+            <div className="max-h-72 overflow-auto border-t border-white/5">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-secondary/60 uppercase border-b border-white/5 sticky top-0 bg-surface">
+                    <th className="text-left px-4 py-2 font-medium">Name</th>
+                    <th className="text-left px-2 py-2 font-medium w-28">Vendor</th>
+                    <th className="text-left px-2 py-2 font-medium w-20">Scope</th>
+                    <th className="text-left px-2 py-2 font-medium w-16">Fields</th>
+                    <th className="text-right px-4 py-2 font-medium w-52">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {templates.map((tpl) => (
+                    <Fragment key={tpl.id}>
+                      <tr
+                        className="border-b border-white/5 hover:bg-white/5"
+                      >
+                        <td className="px-4 py-2 text-primary">
+                          {renamingTemplateId === tpl.id ? (
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                handleRenameTemplate(tpl.id);
+                              }}
+                              className="flex items-center gap-1"
+                            >
+                              <input
+                                className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-primary focus:outline-none focus:ring-1 focus:ring-primary/50 w-48"
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                autoFocus
+                                onBlur={() => setRenamingTemplateId(null)}
+                              />
+                            </form>
+                          ) : (
+                            <span>{tpl.name}</span>
+                          )}
+                          {tpl.description && (
+                            <p className="text-secondary/40 mt-0.5 truncate max-w-xs">
+                              {tpl.description}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-secondary">
+                          {tpl.vendor}
+                        </td>
+                        <td className="px-2 py-2 text-secondary/60">
+                          {tpl.scope}
+                        </td>
+                        <td className="px-2 py-2 text-secondary">
+                          {tpl.field_count}
+                        </td>
+                        <td className="px-4 py-2 text-right space-x-2">
+                          <button
+                            onClick={() => handleExpandTemplate(tpl.id)}
+                            className="text-primary/60 hover:text-primary"
+                          >
+                            {expandedTemplateId === tpl.id ? "Hide" : "Fields"}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setRenamingTemplateId(tpl.id);
+                              setRenameValue(tpl.name);
+                            }}
+                            className="text-primary/60 hover:text-primary"
+                          >
+                            Rename
+                          </button>
+                          <button
+                            onClick={() => handleDuplicateTemplate(tpl)}
+                            className="text-primary/60 hover:text-primary"
+                          >
+                            Duplicate
+                          </button>
+                          {selectedConfigId && endpoints.length > 0 && (
+                            <select
+                              className="bg-white/5 border border-white/10 rounded px-1 py-0.5 text-xs text-secondary focus:outline-none"
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  handleAssignTemplateToEndpoint(tpl.id, Number(e.target.value));
+                                }
+                              }}
+                            >
+                              <option value="">Assign...</option>
+                              {endpoints.map((ep) => (
+                                <option key={ep.id} value={ep.id}>
+                                  {ep.name}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          <button
+                            onClick={() => handleDeleteTemplate(tpl.id)}
+                            className="text-red-400/60 hover:text-red-400"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                      {expandedTemplateId === tpl.id && expandedTemplateDetail && (
+                        <tr className="bg-white/[0.02]">
+                          <td colSpan={5} className="px-6 py-3">
+                            <div className="grid grid-cols-[1fr_1fr_auto_auto_auto] gap-x-4 gap-y-1 text-xs">
+                              <span className="text-secondary/60 uppercase font-medium">JSON Path</span>
+                              <span className="text-secondary/60 uppercase font-medium">Display Name</span>
+                              <span className="text-secondary/60 uppercase font-medium">CMDB</span>
+                              <span className="text-secondary/60 uppercase font-medium">Grafana</span>
+                              <span className="text-secondary/60 uppercase font-medium">Type</span>
+                              {expandedTemplateDetail.fields.map((f) => (
+                                <Fragment key={f.id}>
+                                  <span className="text-primary font-mono break-all">{f.json_path}</span>
+                                  <span className="text-secondary">{f.display_name}</span>
+                                  <span className="text-secondary/50">{f.cmdb_column || "\u2014"}</span>
+                                  <span className="text-secondary/50">{f.grafana_label || "\u2014"}</span>
+                                  <span className="text-secondary/50">{f.data_type}</span>
+                                </Fragment>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Modals ─────────────────────────────────────────────────────── */}
 
