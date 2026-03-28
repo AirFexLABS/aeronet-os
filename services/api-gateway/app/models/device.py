@@ -4,36 +4,55 @@ from typing import Optional
 
 
 class DeviceCreate(BaseModel):
-    serial_number: str
-    hostname:      str
-    ip_address:    str
-    mac_address:   Optional[str] = None
-    device_type:   str = "unknown"
-    vendor:        str = "unknown"
-    os_guess:      str = "unknown"
-    site_id:       str = "default"
-    status:        str = "active"
+    serial_number:    str
+    hostname:         str
+    ip_address:       str
+    mac_address:      Optional[str] = None
+    device_type:      str = "unknown"
+    vendor:           str = "unknown"
+    os_guess:         str = "unknown"
+    model:            Optional[str] = None
+    firmware_version: Optional[str] = None
+    zone_id:          Optional[str] = None
+    sla_tier:         str = "standard"
+    location_lat:     Optional[float] = None
+    location_lng:     Optional[float] = None
+    site_id:          str = "default"
+    status:           str = "active"
 
 
 class DeviceUpdate(BaseModel):
-    hostname:    Optional[str] = None
-    ip_address:  Optional[str] = None
-    mac_address: Optional[str] = None
-    device_type: Optional[str] = None
-    vendor:      Optional[str] = None
-    os_guess:    Optional[str] = None
-    site_id:     Optional[str] = None
-    status:      Optional[str] = None
+    hostname:         Optional[str] = None
+    ip_address:       Optional[str] = None
+    mac_address:      Optional[str] = None
+    device_type:      Optional[str] = None
+    vendor:           Optional[str] = None
+    os_guess:         Optional[str] = None
+    model:            Optional[str] = None
+    firmware_version: Optional[str] = None
+    zone_id:          Optional[str] = None
+    sla_tier:         Optional[str] = None
+    location_lat:     Optional[float] = None
+    location_lng:     Optional[float] = None
+    site_id:          Optional[str] = None
+    status:           Optional[str] = None
 
 
 class DeviceOut(BaseModel):
-    serial_number: str
-    hostname:      str
-    ip_address:    str
-    mac_address:   Optional[str] = None
-    device_type:   str
-    vendor:        str = "unknown"
-    os_guess:      str = "unknown"
-    site_id:       str
-    status:        str
-    last_seen:     Optional[str] = None
+    serial_number:    str
+    hostname:         str
+    ip_address:       str
+    mac_address:      Optional[str] = None
+    device_type:      str
+    vendor:           str = "unknown"
+    os_guess:         str = "unknown"
+    confidence:       int = 0
+    model:            Optional[str] = None
+    firmware_version: Optional[str] = None
+    zone_id:          Optional[str] = None
+    sla_tier:         str = "standard"
+    location_lat:     Optional[float] = None
+    location_lng:     Optional[float] = None
+    site_id:          str
+    status:           str
+    last_seen:        Optional[str] = None

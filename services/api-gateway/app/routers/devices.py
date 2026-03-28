@@ -14,6 +14,14 @@ router = APIRouter()
 
 ENROLLER_URL = os.getenv("ENROLLER_URL", "http://enroller:8002")
 
+DEVICE_COLUMNS = (
+    "serial_number, hostname, ip_address::text, mac_address, "
+    "device_type, vendor, os_guess, confidence, "
+    "model, firmware_version, zone_id, sla_tier, "
+    "location_lat, location_lng, "
+    "site_id, status, last_seen::text"
+)
+
 
 # ── GET /devices — list all devices (filtered by site_id for non-admin) ────
 @router.get(
@@ -26,17 +34,13 @@ async def list_devices(
     pool = await db.get_pool()
     if current_user.site_id is not None:
         rows = await pool.fetch(
-            "SELECT serial_number, hostname, ip_address::text, mac_address, "
-            "device_type, vendor, os_guess, confidence, "
-            "site_id, status, last_seen::text FROM devices WHERE site_id = $1 "
+            f"SELECT {DEVICE_COLUMNS} FROM devices WHERE site_id = $1 "
             "ORDER BY serial_number",
             current_user.site_id,
         )
     else:
         rows = await pool.fetch(
-            "SELECT serial_number, hostname, ip_address::text, mac_address, "
-            "device_type, vendor, os_guess, confidence, "
-            "site_id, status, last_seen::text FROM devices ORDER BY serial_number"
+            f"SELECT {DEVICE_COLUMNS} FROM devices ORDER BY serial_number"
         )
     return [dict(r) for r in rows]
 
@@ -52,9 +56,7 @@ async def get_device(
 ):
     pool = await db.get_pool()
     row = await pool.fetchrow(
-        "SELECT serial_number, hostname, ip_address::text, mac_address, "
-        "device_type, vendor, os_guess, "
-        "site_id, status, last_seen::text FROM devices WHERE serial_number = $1",
+        f"SELECT {DEVICE_COLUMNS} FROM devices WHERE serial_number = $1",
         serial,
     )
     if row is None:
@@ -75,8 +77,9 @@ async def create_device(device: DeviceCreate):
     try:
         await pool.execute(
             "INSERT INTO devices (serial_number, hostname, ip_address, mac_address, "
-            "device_type, vendor, os_guess, site_id, status, last_seen) "
-            "VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, NOW())",
+            "device_type, vendor, os_guess, model, firmware_version, zone_id, "
+            "sla_tier, location_lat, location_lng, site_id, status, last_seen) "
+            "VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())",
             device.serial_number,
             device.hostname,
             device.ip_address,
@@ -84,6 +87,12 @@ async def create_device(device: DeviceCreate):
             device.device_type,
             device.vendor,
             device.os_guess,
+            device.model,
+            device.firmware_version,
+            device.zone_id,
+            device.sla_tier,
+            device.location_lat,
+            device.location_lng,
             device.site_id,
             device.status,
         )
@@ -132,6 +141,64 @@ async def delete_device(serial: str):
     )
     if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Device not found")
+
+
+# ── GET /devices/{serial}/changes — device change history ─────────────────
+@router.get(
+    "/devices/{serial}/changes",
+    dependencies=[Depends(require_permission("devices:read"))],
+)
+async def list_device_changes(
+    serial: str,
+    limit: int = Query(default=100, le=500),
+):
+    pool = await db.get_pool()
+    # Verify device exists
+    exists = await pool.fetchval(
+        "SELECT 1 FROM devices WHERE serial_number = $1", serial
+    )
+    if not exists:
+        raise HTTPException(status_code=404, detail="Device not found")
+    rows = await pool.fetch(
+        "SELECT id, serial_number, changed_at::text, change_type, "
+        "old_value, new_value, detected_by "
+        "FROM device_changes WHERE serial_number = $1 "
+        "ORDER BY changed_at DESC LIMIT $2",
+        serial,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
+# ── GET /devices/{serial}/sla — device SLA data ──────────────────────────
+@router.get(
+    "/devices/{serial}/sla",
+    dependencies=[Depends(require_permission("devices:read"))],
+)
+async def get_device_sla(serial: str):
+    pool = await db.get_pool()
+    row = await pool.fetchrow(
+        "SELECT serial_number, uptime_target, measured_uptime, "
+        "measurement_period_days, breach_count, last_calculated::text "
+        "FROM device_sla WHERE serial_number = $1",
+        serial,
+    )
+    if not row:
+        # Return defaults if no SLA record exists yet
+        exists = await pool.fetchval(
+            "SELECT 1 FROM devices WHERE serial_number = $1", serial
+        )
+        if not exists:
+            raise HTTPException(status_code=404, detail="Device not found")
+        return {
+            "serial_number": serial,
+            "uptime_target": 99.9,
+            "measured_uptime": None,
+            "measurement_period_days": 30,
+            "breach_count": 0,
+            "last_calculated": None,
+        }
+    return dict(row)
 
 
 # ── POST /discover — proxy network discovery to enroller ──────────────────

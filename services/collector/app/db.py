@@ -45,6 +45,55 @@ async def upsert_connectivity(
     )
 
 
+async def upsert_device(
+    serial_number: str,
+    hostname: str,
+    ip_address: str,
+    mac_address: str | None = None,
+    device_type: str = "unknown",
+    vendor: str = "unknown",
+    model: str | None = None,
+    firmware_version: str | None = None,
+    zone_id: str | None = None,
+    site_id: str = "default",
+) -> None:
+    """Insert or update a device record from MIST collector data."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        INSERT INTO devices (serial_number, hostname, ip_address, mac_address,
+                             device_type, vendor, model, firmware_version,
+                             zone_id, site_id, status, last_seen)
+        VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, $10, 'active', NOW())
+        ON CONFLICT (serial_number) DO UPDATE SET
+            hostname         = EXCLUDED.hostname,
+            ip_address       = EXCLUDED.ip_address,
+            mac_address      = COALESCE(EXCLUDED.mac_address, devices.mac_address),
+            device_type      = CASE WHEN EXCLUDED.device_type = 'unknown'
+                                    THEN devices.device_type
+                                    ELSE EXCLUDED.device_type END,
+            vendor           = CASE WHEN EXCLUDED.vendor = 'unknown'
+                                    THEN devices.vendor
+                                    ELSE EXCLUDED.vendor END,
+            model            = COALESCE(EXCLUDED.model, devices.model),
+            firmware_version = COALESCE(EXCLUDED.firmware_version, devices.firmware_version),
+            zone_id          = COALESCE(EXCLUDED.zone_id, devices.zone_id),
+            status           = 'active',
+            last_seen        = NOW()
+        """,
+        serial_number,
+        hostname,
+        ip_address,
+        mac_address,
+        device_type,
+        vendor,
+        model,
+        firmware_version,
+        zone_id,
+        site_id,
+    )
+
+
 async def insert_audit_log(
     event_type: str,
     severity: str,

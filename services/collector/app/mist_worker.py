@@ -206,15 +206,44 @@ class MistWorker:
     # ------------------------------------------------------------------
     async def parse_and_sync(self, devices: list[dict]) -> None:
         """
-        For each device: extract serial, switch hostname, switch port from
-        lldp_stat and upsert into connectivity_matrix.
-        Skip silently if lldp_stat is missing or null.
+        For each device:
+          1. Upsert device record with MIST-enriched fields (vendor, model, firmware, zone).
+          2. Extract LLDP data and upsert into connectivity_matrix.
+        Skip silently if serial is missing.
         """
+        synced = 0
         for device in devices:
             serial = device.get("serial")
-            lldp = device.get("lldp_stat")
+            if not serial:
+                continue
 
-            if not serial or not lldp:
+            # ── Enrich device record from MIST fields ────────────────
+            hostname = device.get("name") or device.get("hostname") or serial
+            ip = device.get("ip") or ""
+            mac = device.get("mac") or None
+            model = device.get("model") or None
+            firmware = device.get("version") or device.get("fw_version") or None
+            # MIST map_id / site name can serve as zone_id
+            zone_id = device.get("map_id") or device.get("site_name") or None
+
+            if ip:
+                await db.upsert_device(
+                    serial_number=serial,
+                    hostname=hostname,
+                    ip_address=ip,
+                    mac_address=mac,
+                    device_type="ap",
+                    vendor="juniper",
+                    model=model,
+                    firmware_version=firmware,
+                    zone_id=zone_id,
+                    site_id=self.site_id,
+                )
+                synced += 1
+
+            # ── LLDP connectivity ─────────────────────────────────────
+            lldp = device.get("lldp_stat")
+            if not lldp:
                 continue
 
             switch_host = lldp.get("system_name")
@@ -229,7 +258,7 @@ class MistWorker:
                 switch_port=switch_port,
             )
 
-        logger.info("Synced %d devices from MIST API", len(devices))
+        logger.info("Synced %d devices (%d enriched) from MIST API", len(devices), synced)
 
     # ------------------------------------------------------------------
     # Alert helper
