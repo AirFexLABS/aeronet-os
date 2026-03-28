@@ -19,6 +19,7 @@ const NAV: NavItem[] = [
   { to: "/discovery", label: "Discovery", icon: "\u2295" },
   { to: "/vlans", label: "VLAN Segments", icon: "\u2630", minRole: "engineer" },
   { to: "/vault", label: "Vault", icon: "\u{1F510}" },
+  { to: "/vendor-explorer", label: "Vendor API", icon: "\u2699", adminOnly: true },
   { to: "/alerts-setup", label: "Alerts Setup", icon: "\u{1F514}", adminOnly: true },
 ];
 

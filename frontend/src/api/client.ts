@@ -179,6 +179,87 @@ export interface VlanCreate {
   notes?:         string;
 }
 
+// ── Vendor Explorer types ────────────────────────────────────────────────
+
+export interface VendorConfig {
+  id: number;
+  vendor: string;
+  display_name: string;
+  base_url: string;
+  auth_type: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorConfigCreate {
+  vendor: string;
+  display_name: string;
+  base_url: string;
+  auth_type: string;
+  credentials: Record<string, string>;
+}
+
+export interface VendorEndpoint {
+  id: number;
+  vendor_config_id: number;
+  name: string;
+  path: string;
+  method: string;
+  description: string | null;
+  poll_enabled: boolean;
+  poll_interval_s: number;
+  last_polled: string | null;
+  created_at: string;
+}
+
+export interface EndpointCreatePayload {
+  name: string;
+  path: string;
+  method: string;
+  description?: string;
+}
+
+export interface VendorFieldMapping {
+  id: number;
+  vendor_endpoint_id: number;
+  json_path: string;
+  display_name: string;
+  cmdb_column: string | null;
+  grafana_label: string | null;
+  data_type: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface FieldMappingCreatePayload {
+  json_path: string;
+  display_name: string;
+  cmdb_column?: string;
+  grafana_label?: string;
+  data_type?: string;
+}
+
+export interface FlattenedField {
+  path: string;
+  value: unknown;
+  type: string;
+}
+
+export interface ExecuteResult {
+  raw: unknown;
+  fields: FlattenedField[];
+  error?: string;
+  body?: string;
+}
+
+export interface VendorTestResult {
+  status: number;
+  ok: boolean;
+  latency_ms: number | null;
+  error?: string;
+}
+
 // ── Vault types ──────────────────────────────────────────────────────────
 
 export type CredentialType =
@@ -340,6 +421,56 @@ export const api = {
       }),
     delete: (id: number) =>
       request<void>(`/vlans/${id}`, { method: "DELETE" }),
+  },
+  vendorExplorer: {
+    configs: {
+      list: () => request<VendorConfig[]>("/vendor-configs"),
+      create: (data: VendorConfigCreate) =>
+        request<VendorConfig>("/vendor-configs", {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+      delete: (id: number) =>
+        request<void>(`/vendor-configs/${id}`, { method: "DELETE" }),
+      test: (id: number) =>
+        request<VendorTestResult>(`/vendor-configs/${id}/test`),
+    },
+    endpoints: {
+      list: (configId: number) =>
+        request<VendorEndpoint[]>(`/vendor-configs/${configId}/endpoints`),
+      create: (configId: number, data: EndpointCreatePayload) =>
+        request<VendorEndpoint>(`/vendor-configs/${configId}/endpoints`, {
+          method: "POST",
+          body: JSON.stringify(data),
+        }),
+      delete: (id: number) =>
+        request<void>(`/vendor-endpoints/${id}`, { method: "DELETE" }),
+      execute: (id: number) =>
+        request<ExecuteResult>(`/vendor-endpoints/${id}/execute`, {
+          method: "POST",
+        }),
+      updatePoll: (
+        id: number,
+        data: { poll_enabled: boolean; poll_interval_s: number }
+      ) =>
+        request<VendorEndpoint>(`/vendor-endpoints/${id}/poll`, {
+          method: "PUT",
+          body: JSON.stringify(data),
+        }),
+    },
+    fields: {
+      list: (endpointId: number) =>
+        request<VendorFieldMapping[]>(
+          `/vendor-endpoints/${endpointId}/fields`
+        ),
+      create: (endpointId: number, data: FieldMappingCreatePayload) =>
+        request<VendorFieldMapping>(
+          `/vendor-endpoints/${endpointId}/fields`,
+          { method: "POST", body: JSON.stringify(data) }
+        ),
+      delete: (id: number) =>
+        request<void>(`/vendor-field-mappings/${id}`, { method: "DELETE" }),
+    },
   },
   emailConfig: {
     get: () => request<EmailConfig>("/email-config"),

@@ -12,6 +12,7 @@ import { Discovery } from "./pages/Discovery";
 import { Vault } from "./pages/Vault";
 import { AlertsSetup } from "./pages/AlertsSetup";
 import { VlanManager } from "./pages/VlanManager";
+import { VendorExplorer } from "./pages/VendorExplorer";
 import { useTheme } from "./hooks/useTheme";
 import { useTokenRefresh } from "./hooks/useTokenRefresh";
 
@@ -38,6 +39,7 @@ function AppInner() {
         <Route path="vault" element={<Vault />} />
         <Route path="alerts-setup" element={<AlertsSetup />} />
         <Route path="vlans" element={<VlanManager />} />
+        <Route path="vendor-explorer" element={<VendorExplorer />} />
       </Route>
     </Routes>
   );
