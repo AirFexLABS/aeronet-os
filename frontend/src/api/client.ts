@@ -150,27 +150,29 @@ export interface EmailConfig {
 export type VlanStatus = "pending" | "active" | "error" | "disabled";
 
 export interface Vlan {
-  id:           number;
-  vlan_id:      number;
-  name:         string;
-  cidr:         string;
-  gateway:      string | null;
-  interface:    string;
-  scan_enabled: boolean;
-  status:       VlanStatus;
-  notes:        string | null;
-  created_at:   string;
-  updated_at:   string;
-}
-
-export interface VlanCreate {
+  id:            number;
   vlan_id:       number;
   name:          string;
   cidr:          string;
-  gateway?:      string;
+  gateway:       string | null;
   interface:     string;
-  scan_enabled?: boolean;
-  notes?:        string;
+  interface_ip:  string | null;
+  scan_enabled:  boolean;
+  status:        VlanStatus;
+  notes:         string | null;
+  created_at:    string;
+  updated_at:    string;
+}
+
+export interface VlanCreate {
+  vlan_id:        number;
+  name:           string;
+  cidr:           string;
+  gateway?:       string;
+  interface:      string;
+  interface_ip?:  string;
+  scan_enabled?:  boolean;
+  notes?:         string;
 }
 
 // ── Vault types ──────────────────────────────────────────────────────────
@@ -332,6 +334,8 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ status }),
       }),
+    delete: (id: number) =>
+      request<void>(`/vlans/${id}`, { method: "DELETE" }),
   },
   emailConfig: {
     get: () => request<EmailConfig>("/email-config"),

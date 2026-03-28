@@ -1,4 +1,5 @@
 # VLAN segment CRUD router
+import ipaddress
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,6 +20,7 @@ class VlanCreate(BaseModel):
     cidr: str
     gateway: str | None = None
     interface: str
+    interface_ip: str | None = None
     scan_enabled: bool = True
     notes: str | None = None
 
@@ -28,12 +30,27 @@ class VlanUpdate(BaseModel):
     cidr: str | None = None
     gateway: str | None = None
     interface: str | None = None
+    interface_ip: str | None = None
     scan_enabled: bool | None = None
     notes: str | None = None
 
 
 class StatusPatch(BaseModel):
     status: str
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────
+
+VLAN_COLUMNS = (
+    "id, vlan_id, name, cidr::text, gateway::text, interface, "
+    "interface_ip::text, scan_enabled, status, notes, "
+    "created_at::text, updated_at::text"
+)
+
+
+def _normalize_cidr(cidr: str) -> str:
+    """Normalize a CIDR string to its network address (e.g. 192.168.1.50/24 → 192.168.1.0/24)."""
+    return str(ipaddress.ip_network(cidr, strict=False))
 
 
 # ── GET /vlans — list all VLANs ──────────────────────────────────────────
@@ -45,9 +62,7 @@ class StatusPatch(BaseModel):
 async def list_vlans():
     pool = await db.get_pool()
     rows = await pool.fetch(
-        "SELECT id, vlan_id, name, cidr::text, gateway::text, interface, "
-        "scan_enabled, status, notes, created_at::text, updated_at::text "
-        "FROM vlans ORDER BY vlan_id"
+        f"SELECT {VLAN_COLUMNS} FROM vlans ORDER BY vlan_id"
     )
     return [dict(r) for r in rows]
 
@@ -61,14 +76,14 @@ async def list_vlans():
 )
 async def create_vlan(body: VlanCreate):
     pool = await db.get_pool()
+    cidr = _normalize_cidr(body.cidr)
     try:
         row = await pool.fetchrow(
-            "INSERT INTO vlans (vlan_id, name, cidr, gateway, interface, scan_enabled, notes) "
-            "VALUES ($1, $2, $3::cidr, $4::inet, $5, $6, $7) "
-            "RETURNING id, vlan_id, name, cidr::text, gateway::text, interface, "
-            "scan_enabled, status, notes, created_at::text, updated_at::text",
-            body.vlan_id, body.name, body.cidr, body.gateway,
-            body.interface, body.scan_enabled, body.notes,
+            "INSERT INTO vlans (vlan_id, name, cidr, gateway, interface, interface_ip, scan_enabled, notes) "
+            "VALUES ($1, $2, $3::cidr, $4::inet, $5, $6::inet, $7, $8) "
+            f"RETURNING {VLAN_COLUMNS}",
+            body.vlan_id, body.name, cidr, body.gateway,
+            body.interface, body.interface_ip, body.scan_enabled, body.notes,
         )
     except Exception as exc:
         if "unique" in str(exc).lower():
@@ -97,11 +112,16 @@ async def update_vlan(vlan_pk: int, body: VlanUpdate):
             detail="No fields to update",
         )
 
+    # Normalize CIDR if provided
+    if "cidr" in updates:
+        updates["cidr"] = _normalize_cidr(updates["cidr"])
+
+    cast_map = {"cidr": "::cidr", "gateway": "::inet", "interface_ip": "::inet"}
     set_parts = []
     values = []
     idx = 1
     for col, val in updates.items():
-        cast = "::cidr" if col == "cidr" else ("::inet" if col == "gateway" else "")
+        cast = cast_map.get(col, "")
         set_parts.append(f"{col} = ${idx}{cast}")
         values.append(val)
         idx += 1
@@ -110,8 +130,7 @@ async def update_vlan(vlan_pk: int, body: VlanUpdate):
     row = await pool.fetchrow(
         f"UPDATE vlans SET {', '.join(set_parts)} "
         f"WHERE id = ${idx} "
-        "RETURNING id, vlan_id, name, cidr::text, gateway::text, interface, "
-        "scan_enabled, status, notes, created_at::text, updated_at::text",
+        f"RETURNING {VLAN_COLUMNS}",
         *values,
     )
     if not row:
@@ -136,10 +155,23 @@ async def patch_vlan_status(vlan_pk: int, body: StatusPatch):
     pool = await db.get_pool()
     row = await pool.fetchrow(
         "UPDATE vlans SET status = $1 WHERE id = $2 "
-        "RETURNING id, vlan_id, name, cidr::text, gateway::text, interface, "
-        "scan_enabled, status, notes, created_at::text, updated_at::text",
+        f"RETURNING {VLAN_COLUMNS}",
         body.status, vlan_pk,
     )
     if not row:
         raise HTTPException(status_code=404, detail="VLAN not found")
     return dict(row)
+
+
+# ── DELETE /vlans/{id} — delete a VLAN ────────────────────────────────────
+
+@router.delete(
+    "/vlans/{vlan_pk}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(Role.ADMIN))],
+)
+async def delete_vlan(vlan_pk: int):
+    pool = await db.get_pool()
+    result = await pool.execute("DELETE FROM vlans WHERE id = $1", vlan_pk)
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="VLAN not found")

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/layout/PageHeader";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -25,9 +25,39 @@ function VlanStatusBadge({ status }: { status: VlanStatus }) {
   );
 }
 
+// ── IP / CIDR helpers ───────────────────────────────────────────────────
+
+function parseIpMask(input: string): { ip: string; prefix: number; network: string } | null {
+  const match = input.trim().match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,2})$/);
+  if (!match) return null;
+
+  const ip = match[1];
+  const prefix = parseInt(match[2], 10);
+  if (prefix < 1 || prefix > 32) return null;
+
+  const octets = ip.split(".").map(Number);
+  if (octets.some((o) => o < 0 || o > 255)) return null;
+
+  // Derive network address by zeroing host bits
+  const ipNum = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  const netNum = (ipNum & mask) >>> 0;
+
+  const network = [
+    (netNum >>> 24) & 0xff,
+    (netNum >>> 16) & 0xff,
+    (netNum >>> 8) & 0xff,
+    netNum & 0xff,
+  ].join(".");
+
+  return { ip, prefix, network: `${network}/${prefix}` };
+}
+
 // ── Setup instructions generator ────────────────────────────────────────
 
 function netplanSnippet(v: Vlan): string {
+  const ip = v.interface_ip ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".250");
+  const prefix = v.cidr.split("/")[1] ?? "24";
   return `# /etc/netplan/60-vlan${v.vlan_id}-${v.name}.yaml
 network:
   version: 2
@@ -36,7 +66,7 @@ network:
       id: ${v.vlan_id}
       link: INSIDE
       addresses:
-        - ${v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".250")}/${v.cidr.split("/")[1] ?? "24"}
+        - ${ip}/${prefix}
       routes:
         - to: ${v.cidr}
           via: ${v.gateway ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".1")}
@@ -44,7 +74,7 @@ network:
 }
 
 function dockerComposeSnippet(v: Vlan): string {
-  const enrIp = v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".50");
+  const enrIp = v.interface_ip ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".50");
   return `# Add to networks: section in infra/docker-compose.yml
   vlan${v.vlan_id}_monitor:
     driver: macvlan
@@ -204,6 +234,77 @@ function InstructionsModal({
   );
 }
 
+// ── Delete confirmation modal ───────────────────────────────────────────
+
+function DeleteModal({
+  vlan,
+  onClose,
+  onConfirm,
+}: {
+  vlan: Vlan;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  const expected = `DELETE ${vlan.name}`;
+  const canConfirm = typed === expected;
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    onConfirm();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative bg-surface border border-white/10 rounded-xl w-full max-w-md">
+        <div className="px-6 py-4 border-b border-white/10">
+          <h2 className="text-lg font-semibold text-red-400">Delete VLAN</h2>
+          <p className="text-xs text-secondary mt-1">
+            This will permanently delete VLAN {vlan.vlan_id} ({vlan.name}) and
+            its configuration. This action cannot be undone.
+          </p>
+        </div>
+
+        <div className="px-6 py-4">
+          <p className="text-sm text-secondary mb-2">
+            Type <span className="font-mono text-primary">{expected}</span> to
+            confirm:
+          </p>
+          <input
+            type="text"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={expected}
+            className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-sm text-primary
+                       focus:outline-none focus:border-red-500/50"
+          />
+        </div>
+
+        <div className="px-6 py-3 border-t border-white/10 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm rounded-lg border border-white/10 text-secondary
+                       hover:text-primary hover:border-white/20 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={!canConfirm || deleting}
+            className="px-4 py-2 text-sm rounded-lg bg-red-600/90 hover:bg-red-600 text-white
+                       transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {deleting ? "Deleting..." : "Delete VLAN"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Create / Edit slide-over ────────────────────────────────────────────
 
 function VlanForm({
@@ -217,51 +318,69 @@ function VlanForm({
 }) {
   const isEdit = !!initial;
 
-  const [form, setForm] = useState<VlanCreate>({
-    vlan_id:      initial?.vlan_id ?? 0,
-    name:         initial?.name ?? "",
-    cidr:         initial?.cidr ?? "",
-    gateway:      initial?.gateway ?? "",
-    interface:    initial?.interface ?? "",
-    scan_enabled: initial?.scan_enabled ?? true,
-    notes:        initial?.notes ?? "",
+  const [vlanId, setVlanId] = useState(initial?.vlan_id ?? 0);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [ipMask, setIpMask] = useState(() => {
+    if (initial?.interface_ip && initial?.cidr) {
+      const prefix = initial.cidr.split("/")[1] ?? "24";
+      return `${initial.interface_ip}/${prefix}`;
+    }
+    return "";
   });
+  const [gateway, setGateway] = useState(initial?.gateway ?? "");
+  const [iface, setIface] = useState(initial?.interface ?? "");
+  const [scanEnabled, setScanEnabled] = useState(initial?.scan_enabled ?? true);
+  const [notes, setNotes] = useState(initial?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   // Auto-fill interface when vlan_id changes (only in create mode)
   useEffect(() => {
-    if (!isEdit && form.vlan_id > 0) {
-      setForm((f) => ({ ...f, interface: `INSIDE.${f.vlan_id}` }));
+    if (!isEdit && vlanId > 0) {
+      setIface(`INSIDE.${vlanId}`);
     }
-  }, [form.vlan_id, isEdit]);
+  }, [vlanId, isEdit]);
+
+  // Derive network CIDR and interface IP from the IP/mask input
+  const derived = useMemo(() => parseIpMask(ipMask), [ipMask]);
 
   const handleSave = async () => {
     setError("");
 
-    if (!form.vlan_id || form.vlan_id < 1) {
+    if (!vlanId || vlanId < 1) {
       setError("VLAN ID must be a positive integer");
       return;
     }
-    if (!form.name.trim()) {
+    if (!name.trim()) {
       setError("Name is required");
       return;
     }
-    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/.test(form.cidr)) {
-      setError("CIDR must be in format x.x.x.x/xx");
+    if (!derived) {
+      setError("Interface IP / Mask must be in format x.x.x.x/xx (e.g. 192.168.1.50/24)");
       return;
     }
-    if (!form.interface.trim()) {
+    if (!iface.trim()) {
       setError("Interface is required");
       return;
     }
 
     setSaving(true);
     try {
+      const payload: VlanCreate = {
+        vlan_id: vlanId,
+        name: name.trim(),
+        cidr: derived.network,
+        gateway: gateway.trim() || undefined,
+        interface: iface.trim(),
+        interface_ip: derived.ip,
+        scan_enabled: scanEnabled,
+        notes: notes.trim() || undefined,
+      };
+
       if (isEdit && initial) {
-        await api.vlans.update(initial.id, form);
+        await api.vlans.update(initial.id, payload);
       } else {
-        await api.vlans.create(form);
+        await api.vlans.create(payload);
       }
       onSaved();
       onClose();
@@ -271,9 +390,6 @@ function VlanForm({
       setSaving(false);
     }
   };
-
-  const set = (key: keyof VlanCreate, value: unknown) =>
-    setForm((f) => ({ ...f, [key]: value }));
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -299,16 +415,24 @@ function VlanForm({
           )}
 
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-secondary">VLAN ID</span>
+            <span className="text-xs text-secondary flex items-center gap-1.5">
+              VLAN ID
+              {isEdit && (
+                <span className="text-secondary/50" title="VLAN ID cannot be changed after creation">
+                  &#x1F512;
+                </span>
+              )}
+            </span>
             <input
               type="number"
               min={1}
               max={4094}
-              value={form.vlan_id || ""}
-              onChange={(e) => set("vlan_id", parseInt(e.target.value) || 0)}
+              value={vlanId || ""}
+              onChange={(e) => setVlanId(parseInt(e.target.value) || 0)}
               disabled={isEdit}
               className="bg-background border border-white/10 rounded-lg px-3 py-2 text-sm text-primary
-                         focus:outline-none focus:border-primary/50 disabled:opacity-40"
+                         focus:outline-none focus:border-primary/50 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={isEdit ? "VLAN ID cannot be changed after creation" : undefined}
             />
           </label>
 
@@ -316,8 +440,8 @@ function VlanForm({
             <span className="text-xs text-secondary">Name</span>
             <input
               type="text"
-              value={form.name}
-              onChange={(e) => set("name", e.target.value)}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               placeholder="sandbox"
               className="bg-background border border-white/10 rounded-lg px-3 py-2 text-sm text-primary
                          focus:outline-none focus:border-primary/50"
@@ -328,32 +452,49 @@ function VlanForm({
             <span className="text-xs text-secondary">Interface</span>
             <input
               type="text"
-              value={form.interface}
-              onChange={(e) => set("interface", e.target.value)}
+              value={iface}
+              onChange={(e) => setIface(e.target.value)}
               placeholder="INSIDE.4"
               className="bg-background border border-white/10 rounded-lg px-3 py-2 text-sm text-primary
                          focus:outline-none focus:border-primary/50"
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-secondary">CIDR</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-secondary">Interface IP / Mask</span>
             <input
               type="text"
-              value={form.cidr}
-              onChange={(e) => set("cidr", e.target.value)}
-              placeholder="192.168.1.0/24"
+              value={ipMask}
+              onChange={(e) => setIpMask(e.target.value)}
+              placeholder="192.168.1.50/24"
               className="bg-background border border-white/10 rounded-lg px-3 py-2 text-sm text-primary
                          focus:outline-none focus:border-primary/50"
             />
-          </label>
+            {ipMask && !derived && (
+              <p className="text-xs text-red-400 mt-0.5">
+                Invalid format. Use x.x.x.x/xx (e.g. 192.168.1.50/24)
+              </p>
+            )}
+            {derived && (
+              <div className="mt-1 bg-background/50 border border-white/5 rounded-lg px-3 py-2 flex flex-col gap-0.5">
+                <p className="text-xs text-secondary">
+                  Network CIDR:{" "}
+                  <span className="font-mono text-primary">{derived.network}</span>
+                </p>
+                <p className="text-xs text-secondary">
+                  Interface will be assigned:{" "}
+                  <span className="font-mono text-primary">{derived.ip}</span>
+                </p>
+              </div>
+            )}
+          </div>
 
           <label className="flex flex-col gap-1">
             <span className="text-xs text-secondary">Gateway</span>
             <input
               type="text"
-              value={form.gateway ?? ""}
-              onChange={(e) => set("gateway", e.target.value)}
+              value={gateway}
+              onChange={(e) => setGateway(e.target.value)}
               placeholder="192.168.1.1"
               className="bg-background border border-white/10 rounded-lg px-3 py-2 text-sm text-primary
                          focus:outline-none focus:border-primary/50"
@@ -363,8 +504,8 @@ function VlanForm({
           <label className="flex items-center gap-3">
             <input
               type="checkbox"
-              checked={form.scan_enabled ?? true}
-              onChange={(e) => set("scan_enabled", e.target.checked)}
+              checked={scanEnabled}
+              onChange={(e) => setScanEnabled(e.target.checked)}
               className="accent-primary w-4 h-4"
             />
             <span className="text-sm text-primary">Scan enabled</span>
@@ -373,8 +514,8 @@ function VlanForm({
           <label className="flex flex-col gap-1">
             <span className="text-xs text-secondary">Notes</span>
             <textarea
-              value={form.notes ?? ""}
-              onChange={(e) => set("notes", e.target.value)}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
               rows={3}
               className="bg-background border border-white/10 rounded-lg px-3 py-2 text-sm text-primary
                          focus:outline-none focus:border-primary/50 resize-none"
@@ -429,6 +570,7 @@ export function VlanManager() {
   const [showForm, setShowForm] = useState(false);
   const [editVlan, setEditVlan] = useState<Vlan | null>(null);
   const [instructionsVlan, setInstructionsVlan] = useState<Vlan | null>(null);
+  const [deleteVlan, setDeleteVlan] = useState<Vlan | null>(null);
 
   const loadVlans = useCallback(async () => {
     setLoading(true);
@@ -453,6 +595,16 @@ export function VlanManager() {
       await loadVlans();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Status update failed");
+    }
+  };
+
+  const handleDelete = async (vlan: Vlan) => {
+    try {
+      await api.vlans.delete(vlan.id);
+      setDeleteVlan(null);
+      await loadVlans();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
     }
   };
 
@@ -502,6 +654,7 @@ export function VlanManager() {
                   <th className="text-left px-4 py-3 font-medium">Name</th>
                   <th className="text-left px-4 py-3 font-medium">Interface</th>
                   <th className="text-left px-4 py-3 font-medium">CIDR</th>
+                  <th className="text-left px-4 py-3 font-medium">Interface IP</th>
                   <th className="text-left px-4 py-3 font-medium">Gateway</th>
                   <th className="text-left px-4 py-3 font-medium">Scan</th>
                   <th className="text-left px-4 py-3 font-medium">Status</th>
@@ -523,6 +676,9 @@ export function VlanManager() {
                     </td>
                     <td className="px-4 py-3 font-mono text-secondary text-xs">
                       {v.cidr}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-secondary text-xs">
+                      {v.interface_ip ?? "\u2014"}
                     </td>
                     <td className="px-4 py-3 font-mono text-secondary text-xs">
                       {v.gateway ?? "\u2014"}
@@ -576,6 +732,15 @@ export function VlanManager() {
                             Disable
                           </button>
                         )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => setDeleteVlan(v)}
+                            className="px-2 py-1 text-xs rounded border border-white/10 text-secondary
+                                       hover:text-red-400 hover:border-red-700/50 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -603,6 +768,15 @@ export function VlanManager() {
         <InstructionsModal
           vlan={instructionsVlan}
           onClose={() => setInstructionsVlan(null)}
+        />
+      )}
+
+      {/* Modal: delete confirmation */}
+      {deleteVlan && (
+        <DeleteModal
+          vlan={deleteVlan}
+          onClose={() => setDeleteVlan(null)}
+          onConfirm={() => handleDelete(deleteVlan)}
         />
       )}
     </div>
