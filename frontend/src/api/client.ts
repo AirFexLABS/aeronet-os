@@ -145,6 +145,34 @@ export interface EmailConfig {
   updated_at: string;
 }
 
+// ── VLAN types ──────────────────────────────────────────────────────────
+
+export type VlanStatus = "pending" | "active" | "error" | "disabled";
+
+export interface Vlan {
+  id:           number;
+  vlan_id:      number;
+  name:         string;
+  cidr:         string;
+  gateway:      string | null;
+  interface:    string;
+  scan_enabled: boolean;
+  status:       VlanStatus;
+  notes:        string | null;
+  created_at:   string;
+  updated_at:   string;
+}
+
+export interface VlanCreate {
+  vlan_id:       number;
+  name:          string;
+  cidr:          string;
+  gateway?:      string;
+  interface:     string;
+  scan_enabled?: boolean;
+  notes?:        string;
+}
+
 // ── Vault types ──────────────────────────────────────────────────────────
 
 export type CredentialType =
@@ -286,6 +314,24 @@ export const api = {
       request<void>(`/alert-contacts/${contactId}/channels/${channelId}`, { method: "DELETE" }),
     test: (id: string) =>
       request<{ results: TestResult[] }>(`/alert-contacts/${id}/test`, { method: "POST" }),
+  },
+  vlans: {
+    list: () => request<Vlan[]>("/vlans"),
+    create: (data: VlanCreate) =>
+      request<Vlan>("/vlans", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: number, data: Partial<VlanCreate>) =>
+      request<Vlan>(`/vlans/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    patchStatus: (id: number, status: VlanStatus) =>
+      request<Vlan>(`/vlans/${id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }),
   },
   emailConfig: {
     get: () => request<EmailConfig>("/email-config"),

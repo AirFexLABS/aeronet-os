@@ -23,20 +23,52 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-SCAN_TARGETS = os.getenv("SCAN_TARGETS", "").split(",")
+SCAN_TARGETS_ENV = [c.strip() for c in os.getenv("SCAN_TARGETS", "").split(",") if c.strip()]
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL_MINUTES", "30"))
 
 scanner = NmapScanner()
 scheduler = AsyncIOScheduler()
 
+# Populated at startup from vlans table (or env fallback)
+SCAN_TARGETS: list[str] = []
+
+
+async def _load_scan_targets() -> list[str]:
+    """Load active VLAN CIDRs from the vlans table.
+
+    Falls back to SCAN_TARGETS env var if the DB query fails
+    (table missing, connection error, etc.).
+    """
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT cidr::text FROM vlans "
+                "WHERE scan_enabled = true AND status = 'active' "
+                "ORDER BY vlan_id"
+            )
+        cidrs = [row["cidr"] for row in rows]
+        if cidrs:
+            logger.info(f"SCAN_TARGETS loaded from DB: {cidrs}")
+            return cidrs
+        logger.warning("No active VLANs in DB — falling back to env")
+    except Exception as exc:
+        logger.warning(f"Failed to load VLANs from DB ({exc}) — falling back to env")
+
+    if SCAN_TARGETS_ENV:
+        logger.info(f"SCAN_TARGETS loaded from env fallback: {SCAN_TARGETS_ENV}")
+    return SCAN_TARGETS_ENV
+
 
 async def _run_scheduled_scan():
     """Called by APScheduler every SCAN_INTERVAL minutes."""
+    global SCAN_TARGETS
+    SCAN_TARGETS = await _load_scan_targets()
+
     pool = await get_pool()
     async with pool.acquire() as conn:
         tracker = AssetTracker()
         for cidr in SCAN_TARGETS:
-            cidr = cidr.strip()
             if not cidr:
                 continue
             logger.info(f"Scheduled scan starting: {cidr}")
@@ -47,7 +79,10 @@ async def _run_scheduled_scan():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if SCAN_TARGETS and SCAN_TARGETS[0]:
+    global SCAN_TARGETS
+    SCAN_TARGETS = await _load_scan_targets()
+
+    if SCAN_TARGETS:
         scheduler.add_job(
             _run_scheduled_scan,
             "interval",
@@ -60,6 +95,8 @@ async def lifespan(app: FastAPI):
             f"Scheduled scanner started — "
             f"targets: {SCAN_TARGETS}, interval: {SCAN_INTERVAL}m"
         )
+    else:
+        logger.warning("No SCAN_TARGETS configured — scheduled scanning disabled")
     yield
     scheduler.shutdown(wait=False)
     await close_pool()
@@ -141,32 +178,18 @@ async def discover_network(req: DiscoverRequest) -> list[dict]:
     """
     import ipaddress
 
-    # Validate CIDR
     try:
-        network = ipaddress.ip_network(req.cidr, strict=False)
+        ipaddress.ip_network(req.cidr, strict=False)
     except ValueError:
         from fastapi import HTTPException
 
         raise HTTPException(status_code=422, detail="Invalid CIDR format")
 
-    # Discover hosts first with a quick ping sweep
-    quick_scanner = NmapScanner(arguments="-sn -T4")
-    hosts = await asyncio.wait_for(
-        quick_scanner.scan_cidr(req.cidr),
-        timeout=req.timeout,
+    results = await asyncio.wait_for(
+        scanner.scan_cidr(req.cidr),
+        timeout=max(req.timeout, 60),
     )
-
-    # Fingerprint each discovered host concurrently
-    tasks = [fingerprint_device(h["ip"]) for h in hosts]
-    try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*tasks, return_exceptions=True),
-            timeout=req.timeout,
-        )
-    except asyncio.TimeoutError:
-        results = []
-
-    return [r for r in results if isinstance(r, dict)]
+    return results
 
 
 @app.get("/sites")

@@ -9,6 +9,7 @@ const NAV = [
   { to: "/topology", label: "Topology", icon: "\u2b21" },
   { to: "/alerts", label: "Alerts", icon: "\u25ce" },
   { to: "/discovery", label: "Discovery", icon: "\u2295" },
+  { to: "/vlans", label: "VLAN Segments", icon: "\u2630", minRole: "engineer" as const },
   { to: "/vault", label: "Vault", icon: "\u{1F510}" },
   { to: "/alerts-setup", label: "Alerts Setup", icon: "\u{1F514}", adminOnly: true },
 ] as const;
@@ -44,7 +45,12 @@ export function Sidebar() {
         </span>
       </div>
       <nav className="flex-1 py-4 flex flex-col gap-1 px-3">
-        {NAV.filter((item) => !("adminOnly" in item && item.adminOnly) || user?.role === "admin").map(({ to, label, icon }) => (
+        {NAV.filter((item) => {
+          if ("adminOnly" in item && item.adminOnly) return user?.role === "admin";
+          if ("minRole" in item && item.minRole === "engineer")
+            return user?.role === "admin" || user?.role === "engineer";
+          return true;
+        }).map(({ to, label, icon }) => (
           <NavLink
             key={to}
             to={to}
