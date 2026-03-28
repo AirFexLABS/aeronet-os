@@ -110,6 +110,7 @@ class AssetTracker:
                 vendor=device.get("vendor", "unknown"),
                 os_guess=device.get("os_guess", "unknown"),
                 device_type=device.get("device_type", "unknown"),
+                confidence=device.get("confidence", 0),
             )
 
     async def notify_asset_moved(self, serial: str, old_ip: str, new_ip: str) -> None:

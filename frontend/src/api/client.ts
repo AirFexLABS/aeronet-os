@@ -34,6 +34,9 @@ export interface Device {
   site_id: string;
   status: "active" | "offline" | "unknown";
   last_seen: string;
+  vendor: string;
+  os_guess: string;
+  confidence: number;
 }
 
 export interface ConnectivityEntry {

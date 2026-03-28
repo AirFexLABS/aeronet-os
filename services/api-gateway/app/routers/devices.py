@@ -27,7 +27,7 @@ async def list_devices(
     if current_user.site_id is not None:
         rows = await pool.fetch(
             "SELECT serial_number, hostname, ip_address::text, mac_address, "
-            "device_type, vendor, os_guess, "
+            "device_type, vendor, os_guess, confidence, "
             "site_id, status, last_seen::text FROM devices WHERE site_id = $1 "
             "ORDER BY serial_number",
             current_user.site_id,
@@ -35,7 +35,7 @@ async def list_devices(
     else:
         rows = await pool.fetch(
             "SELECT serial_number, hostname, ip_address::text, mac_address, "
-            "device_type, vendor, os_guess, "
+            "device_type, vendor, os_guess, confidence, "
             "site_id, status, last_seen::text FROM devices ORDER BY serial_number"
         )
     return [dict(r) for r in rows]

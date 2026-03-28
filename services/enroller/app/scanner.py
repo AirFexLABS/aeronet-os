@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import re
+import socket
 from dataclasses import dataclass
 
 import httpx
@@ -48,6 +49,29 @@ NMAP_ARGUMENTS = os.getenv(
 )
 
 
+def _get_self_ips() -> set[str]:
+    """Return all IPs assigned to this host/container to exclude from results."""
+    self_ips = {"127.0.0.1"}
+    try:
+        with open("/proc/net/fib_trie") as f:
+            content = f.read()
+        ips = re.findall(r"(\d+\.\d+\.\d+\.\d+)", content)
+        self_ips.update(ips)
+    except Exception:
+        pass
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None):
+            self_ips.add(info[4][0])
+    except Exception:
+        pass
+    return self_ips
+
+
+SELF_IPS = _get_self_ips()
+logger.info(f"Self-IPs detected (will be excluded from scan results): {SELF_IPS}")
+
+
 @dataclass
 class DiscoveredDevice:
     ip: str
@@ -80,7 +104,14 @@ class NmapScanner:
             None,
             lambda: self.nm.scan(hosts=cidr, arguments=self.arguments),
         )
-        return self._parse_results()
+        results = self._parse_results()
+        filtered = []
+        for d in results:
+            if d["ip"] in SELF_IPS:
+                logger.debug(f"Excluding self-IP from results: {d['ip']}")
+            else:
+                filtered.append(d)
+        return filtered
 
     def _parse_results(self) -> list[dict]:
         devices = []
@@ -363,6 +394,22 @@ async def fingerprint_device(ip: str) -> dict:
     Fingerprint a single IP address: run an Nmap scan and return enriched
     device information including vendor, device class, and confidence score.
     """
+    if ip in SELF_IPS:
+        logger.debug(f"Excluding self-IP from results: {ip}")
+        return {
+            "ip": ip,
+            "hostname": "",
+            "mac": "",
+            "vendor": "self",
+            "device_class": "unknown",
+            "open_ports": [],
+            "services": {},
+            "os_guess": "self",
+            "confidence": 0,
+            "snmp_desc": None,
+            "skipped": True,
+        }
+
     scanner = NmapScanner(
         arguments="-sS -sV -sC -O --osscan-guess -sU -p U:161 -T4 --open",
     )

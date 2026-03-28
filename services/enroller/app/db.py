@@ -44,14 +44,16 @@ async def upsert_device(
     mac_address: str | None = None,
     vendor: str = "unknown",
     os_guess: str = "unknown",
+    confidence: int = 0,
 ) -> None:
     """Insert or update a device record."""
     pool = await get_pool()
     await pool.execute(
         """
         INSERT INTO devices (serial_number, hostname, ip_address, mac_address,
-                             device_type, vendor, os_guess, site_id, status, last_seen)
-        VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, NOW())
+                             device_type, vendor, os_guess, confidence,
+                             site_id, status, last_seen)
+        VALUES ($1, $2, $3::inet, $4, $5, $6, $7, $8, $9, $10, NOW())
         ON CONFLICT (serial_number) DO UPDATE SET
             hostname    = EXCLUDED.hostname,
             ip_address  = EXCLUDED.ip_address,
@@ -65,6 +67,7 @@ async def upsert_device(
             os_guess    = CASE WHEN EXCLUDED.os_guess = 'unknown'
                                THEN devices.os_guess
                                ELSE EXCLUDED.os_guess END,
+            confidence  = GREATEST(EXCLUDED.confidence, devices.confidence),
             status      = EXCLUDED.status,
             last_seen   = NOW()
         """,
@@ -75,6 +78,7 @@ async def upsert_device(
         device_type,
         vendor,
         os_guess,
+        confidence,
         site_id,
         status,
     )
