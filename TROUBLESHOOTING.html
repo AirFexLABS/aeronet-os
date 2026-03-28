@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AeroNet OS — Troubleshooting Manual</title>
+<style>
+  :root {
+    --bg:       #0d1117;
+    --bg2:      #161b22;
+    --bg3:      #21262d;
+    --border:   #30363d;
+    --text:     #e6edf3;
+    --muted:    #8b949e;
+    --accent:   #58a6ff;
+    --green:    #3fb950;
+    --yellow:   #d29922;
+    --red:      #f85149;
+    --orange:   #f0883e;
+    --cyan:     #39d0d8;
+    --purple:   #bc8cff;
+    --mono:     'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    --sans:     'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  /* ── Layout ── */
+  .page { max-width: 960px; margin: 0 auto; padding: 48px 32px 80px; }
+
+  /* ── Header ── */
+  .doc-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 32px;
+    margin-bottom: 48px;
+  }
+
+  .doc-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(88,166,255,0.1);
+    border: 1px solid rgba(88,166,255,0.3);
+    border-radius: 20px;
+    padding: 4px 14px;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+
+  .doc-title {
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, #e6edf3 0%, #8b949e 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .doc-subtitle {
+    color: var(--muted);
+    font-size: 15px;
+    margin-bottom: 24px;
+  }
+
+  .doc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .doc-meta span { display: flex; align-items: center; gap: 6px; }
+  .doc-meta strong { color: var(--text); }
+
+  /* ── TOC ── */
+  .toc {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 48px;
+  }
+
+  .toc-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  .toc ol {
+    list-style: none;
+    counter-reset: toc;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 32px;
+  }
+
+  .toc li {
+    counter-increment: toc;
+    font-size: 13.5px;
+  }
+
+  .toc li::before {
+    content: counter(toc, decimal-leading-zero) " ";
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    margin-right: 6px;
+  }
+
+  .toc a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+
+  .toc a:hover { color: #79bbff; text-decoration: underline; }
+
+  /* ── Sections ── */
+  .section {
+    margin-bottom: 56px;
+    scroll-margin-top: 24px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-num {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    flex-shrink: 0;
+  }
+
+  h2 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 24px 0 10px;
+  }
+
+  p { color: var(--muted); margin-bottom: 12px; }
+  p strong { color: var(--text); }
+
+  /* ── Alert boxes ── */
+  .alert {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 16px 0;
+    font-size: 13.5px;
+  }
+
+  .alert-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .alert-body { flex: 1; }
+  .alert-body strong { display: block; margin-bottom: 4px; font-size: 13px; }
+  .alert-body p { margin: 0; font-size: 13px; }
+
+  .alert.error   { background: rgba(248,81,73,0.08);  border: 1px solid rgba(248,81,73,0.25); }
+  .alert.warning { background: rgba(210,153,34,0.08); border: 1px solid rgba(210,153,34,0.25); }
+  .alert.info    { background: rgba(88,166,255,0.08); border: 1px solid rgba(88,166,255,0.25); }
+  .alert.success { background: rgba(63,185,80,0.08);  border: 1px solid rgba(63,185,80,0.25); }
+
+  .alert.error   .alert-body strong { color: var(--red); }
+  .alert.warning .alert-body strong { color: var(--yellow); }
+  .alert.info    .alert-body strong { color: var(--accent); }
+  .alert.success .alert-body strong { color: var(--green); }
+
+  /* ── Code blocks ── */
+  .code-wrap {
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 12px 0 20px;
+  }
+
+  .code-label {
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    padding: 7px 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .copy-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-family: var(--mono);
+    transition: all 0.15s;
+  }
+
+  .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .copy-btn.copied { border-color: var(--green); color: var(--green); }
+
+  pre {
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: #c9d1d9;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  pre .c  { color: #484f58; }
+  pre .g  { color: var(--green); }
+  pre .r  { color: var(--red); }
+  pre .y  { color: var(--yellow); }
+  pre .b  { color: var(--accent); }
+  pre .cy { color: var(--cyan); }
+  pre .p  { color: var(--purple); }
+
+  code {
+    background: rgba(139,148,158,0.1);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--cyan);
+  }
+
+  /* ── Diagnostic checklist ── */
+  .checklist {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13.5px;
+    transition: border-color 0.2s;
+  }
+
+  .checklist li:hover { border-color: #58a6ff33; }
+
+  .chk-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--bg3);
+    border-radius: 4px;
+    padding: 2px 6px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .chk-body { flex: 1; }
+  .chk-title { font-weight: 500; color: var(--text); margin-bottom: 4px; }
+  .chk-desc { font-size: 12.5px; color: var(--muted); }
+
+  .chk-result {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-top: 2px;
+  }
+
+  .chk-result.pass { background: rgba(63,185,80,0.15); color: var(--green); }
+  .chk-result.fail { background: rgba(248,81,73,0.15); color: var(--red); }
+  .chk-result.info { background: rgba(88,166,255,0.15); color: var(--accent); }
+
+  /* ── Root cause timeline ── */
+  .timeline {
+    position: relative;
+    padding-left: 28px;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 7px;
+    top: 8px;
+    bottom: 8px;
+    width: 1px;
+    background: var(--border);
+  }
+
+  .timeline-item {
+    position: relative;
+    margin-bottom: 20px;
+  }
+
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -24px;
+    top: 7px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--border);
+    border: 2px solid var(--bg);
+  }
+
+  .timeline-item.root::before { background: var(--red); }
+  .timeline-item.fix::before  { background: var(--green); }
+  .timeline-item.clue::before { background: var(--yellow); }
+
+  .timeline-time {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .timeline-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .timeline-desc {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  /* ── Fix cards ── */
+  .fix-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .fix-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .fix-card:hover { border-color: #58a6ff33; }
+
+  .fix-card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .fix-priority {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+
+  .p-critical { background: rgba(248,81,73,0.2);  color: var(--red); }
+  .p-high     { background: rgba(240,136,62,0.2); color: var(--orange); }
+  .p-medium   { background: rgba(210,153,34,0.2); color: var(--yellow); }
+
+  .fix-title { flex: 1; font-size: 14px; font-weight: 500; }
+
+  .fix-chevron {
+    color: var(--muted);
+    font-size: 12px;
+    transition: transform 0.2s;
+  }
+
+  .fix-card.open .fix-chevron { transform: rotate(90deg); }
+
+  .fix-card-body {
+    display: none;
+    padding: 0 18px 18px;
+    border-top: 1px solid var(--border);
+  }
+
+  .fix-card.open .fix-card-body { display: block; }
+
+  .fix-card-body p {
+    margin: 14px 0 10px;
+    font-size: 13.5px;
+  }
+
+  /* ── Tables ── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 16px 0;
+  }
+
+  .data-table th {
+    text-align: left;
+    padding: 8px 14px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .data-table td {
+    padding: 9px 14px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    vertical-align: top;
+  }
+
+  .data-table td:first-child { color: var(--text); font-weight: 500; }
+  .data-table tr:hover td { background: rgba(88,166,255,0.03); }
+
+  /* ── Footer ── */
+  .doc-footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  @media (max-width: 640px) {
+    .toc ol { grid-template-columns: 1fr; }
+    .doc-title { font-size: 26px; }
+    .page { padding: 32px 20px 60px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <header class="doc-header">
+    <div class="doc-badge">
+      <span>◈</span> AeroNet OS · Virgilio Production Server
+    </div>
+    <h1 class="doc-title">Troubleshooting Manual</h1>
+    <p class="doc-subtitle">Diagnostics, known issues, and step-by-step fixes for the AeroNet OS stack on Virgilio.</p>
+    <div class="doc-meta">
+      <span><strong>Host:</strong> virgilio · 216.152.167.28</span>
+      <span><strong>OS:</strong> Ubuntu 24.04 LTS</span>
+      <span><strong>Stack:</strong> 11 Docker containers</span>
+      <span><strong>Last updated:</strong> 2026-03-28</span>
+    </div>
+  </header>
+
+  <!-- TOC -->
+  <nav class="toc">
+    <div class="toc-title">Contents</div>
+    <ol>
+      <li><a href="#quick-health">Quick health check</a></li>
+      <li><a href="#incident">Incident: 2026-03-28</a></li>
+      <li><a href="#root-cause">Root cause analysis</a></li>
+      <li><a href="#fix-tls">Fix: TLS certificate</a></li>
+      <li><a href="#fix-nat">Fix: Stale Docker NAT</a></li>
+      <li><a href="#fix-stack">Fix: Full stack restart</a></li>
+      <li><a href="#diagnostic-flow">Diagnostic flowchart</a></li>
+      <li><a href="#known-issues">Known issues registry</a></li>
+      <li><a href="#security-notes">Security notes</a></li>
+      <li><a href="#reference">Quick reference</a></li>
+    </ol>
+  </nav>
+
+  <!-- 1. Quick health check -->
+  <section class="section" id="quick-health">
+    <div class="section-header">
+      <span class="section-num">01</span>
+      <h2>Quick health check</h2>
+    </div>
+    <p>Run these five commands in order whenever the UI is unreachable. Each one isolates a specific layer of the stack.</p>
+
+    <ul class="checklist">
+      <li>
+        <span class="chk-num">01</span>
+        <div class="chk-body">
+          <div class="chk-title">All containers running?</div>
+          <div class="chk-desc"><code>docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'</code></div>
+        </div>
+        <span class="chk-result info">expect: 11 Up</span>
+      </li>
+      <li>
+        <span class="chk-num">02</span>
+        <div class="chk-body">
+          <div class="chk-title">nginx config valid?</div>
+          <div class="chk-desc"><code>docker exec aeronet-nginx nginx -t</code></div>
+        </div>
+        <span class="chk-result pass">expect: ok</span>
+      </li>
+      <li>
+        <span class="chk-num">03</span>
+        <div class="chk-body">
+          <div class="chk-title">nginx responding internally?</div>
+          <div class="chk-desc"><code>curl -sk https://127.0.0.1 -o /dev/null -w "%{http_code}"</code></div>
+        </div>
+        <span class="chk-result pass">expect: 200</span>
+      </li>
+      <li>
+        <span class="chk-num">04</span>
+        <div class="chk-body">
+          <div class="chk-title">NAT pointing to correct container IP?</div>
+          <div class="chk-desc"><code>sudo nft list table ip nat | grep dnat</code> — compare IP with <code>docker inspect aeronet-nginx --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'</code></div>
+        </div>
+        <span class="chk-result info">must match</span>
+      </li>
+      <li>
+        <span class="chk-num">05</span>
+        <div class="chk-body">
+          <div class="chk-title">Ports 80/443 bound on host?</div>
+          <div class="chk-desc"><code>ss -tlnp | grep -E ':(80|443)'</code></div>
+        </div>
+        <span class="chk-result pass">expect: 0.0.0.0</span>
+      </li>
+    </ul>
+
+    <div class="alert info" style="margin-top:20px;">
+      <span class="alert-icon">ℹ</span>
+      <div class="alert-body">
+        <strong>UFW is inactive by design</strong>
+        <p>Firewall rules are managed entirely by nftables. <code>sudo ufw status</code> will always show <em>inactive</em> — this is correct and expected.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. Incident -->
+  <section class="section" id="incident">
+    <div class="section-header">
+      <span class="section-num">02</span>
+      <h2>Incident: 2026-03-28 — UI unreachable</h2>
+    </div>
+    <p><strong>Symptom:</strong> Browser showed <code>ERR_CONNECTION_REFUSED</code> on <code>http://aeronet.local</code>. Stack had been working the previous day from the same network.</p>
+    <p><strong>Resolution time:</strong> ~2 hours of diagnostics. Resolved by regenerating the TLS certificate and performing a full compose down/up to flush stale Docker NAT rules.</p>
+
+    <div class="alert error">
+      <span class="alert-icon">✕</span>
+      <div class="alert-body">
+        <strong>Initial error</strong>
+        <p>All 11 containers were running and ports 80/443 were bound to <code>0.0.0.0</code>. nginx returned HTTP 200 on its container IP directly, but <code>curl https://216.152.167.28</code> returned <code>000</code> (TCP refused).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Root cause -->
+  <section class="section" id="root-cause">
+    <div class="section-header">
+      <span class="section-num">03</span>
+      <h2>Root cause analysis</h2>
+    </div>
+    <p>Two separate issues compounded to produce the outage. They occurred in this order:</p>
+
+    <div class="timeline">
+      <div class="timeline-item root">
+        <div class="timeline-time">2026-03-27 · ~19:00</div>
+        <div class="timeline-title">TLS certificate was missing / corrupted</div>
+        <div class="timeline-desc">An attempt to run <code>openssl</code> inside the nginx container failed (<code>nginx:1.27-alpine</code> has no openssl in PATH). The certificate files at <code>infra/nginx/certs/</code> were absent or invalid on this new server deployment, causing nginx to crash on startup. The previous session's nginx was still running from 9 days earlier with the old cert in memory.</div>
+      </div>
+      <div class="timeline-item clue">
+        <div class="timeline-time">2026-03-27 · 19:29</div>
+        <div class="timeline-title">journalctl evidence</div>
+        <div class="timeline-desc"><code>OCI runtime exec failed: exec: "openssl": executable file not found in $PATH</code> — confirmed the cert generation attempt ran inside the container rather than on the host.</div>
+      </div>
+      <div class="timeline-item root">
+        <div class="timeline-time">2026-03-28 · 13:04</div>
+        <div class="timeline-title">docker restart caused stale NAT entry</div>
+        <div class="timeline-desc">When <code>docker restart aeronet-nginx</code> was used (instead of compose down/up), the container got a new internal IP (<code>172.18.0.5</code>) but Docker's iptables-nft NAT rules still pointed to the old IP (<code>172.18.0.11</code>). Inbound traffic was DNAT'd to a non-existent address and silently dropped.</div>
+      </div>
+      <div class="timeline-item fix">
+        <div class="timeline-time">2026-03-28 · 13:10</div>
+        <div class="timeline-title">Cert regenerated on host (correct)</div>
+        <div class="timeline-desc">New cert generated directly on the host OS using <code>openssl req</code>, with correct separate <code>-keyout aeronet.key</code> and <code>-out aeronet.crt</code> paths. RSA key verified, SAN covers <code>*.aeronet.local</code> and <code>IP:216.152.167.28</code>.</div>
+      </div>
+      <div class="timeline-item fix">
+        <div class="timeline-time">2026-03-28 · 13:20</div>
+        <div class="timeline-title">Full compose down/up flushed stale NAT</div>
+        <div class="timeline-desc"><code>docker compose down &amp;&amp; docker compose up -d</code> tore down the entire network, reassigned IPs, and rebuilt all iptables-nft NAT rules correctly. nginx was assigned <code>172.18.0.11</code> and the DNAT rules matched. Stack fully restored.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Fix TLS -->
+  <section class="section" id="fix-tls">
+    <div class="section-header">
+      <span class="section-num">04</span>
+      <h2>Fix: TLS certificate regeneration</h2>
+    </div>
+
+    <div class="alert warning">
+      <span class="alert-icon">⚠</span>
+      <div class="alert-body">
+        <strong>Always run openssl on the host, never inside the nginx container</strong>
+        <p><code>nginx:1.27-alpine</code> does not have openssl in its PATH. Running <code>docker exec aeronet-nginx openssl ...</code> will fail silently or corrupt existing files.</p>
+      </div>
+    </div>
+
+    <h3>Step 1 — Generate cert on the host</h3>
+    <div class="code-wrap">
+      <div class="code-label">bash — run on Virgilio host<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre><span class="c"># Navigate to the certs directory</span>
+cd /opt/aeronet-os/infra/nginx/certs
+
+<span class="c"># Generate key and cert as SEPARATE files</span>
+sudo openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
+  <span class="b">-keyout aeronet.key</span> \
+  <span class="b">-out aeronet.crt</span> \
+  -subj "/CN=aeronet.local" \
+  -addext "subjectAltName=DNS:aeronet.local,DNS:*.aeronet.local,IP:216.152.167.28"</pre>
+    </div>
+
+    <h3>Step 2 — Verify both files</h3>
+    <div class="code-wrap">
+      <div class="code-label">bash<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre><span class="c"># Key must be valid RSA</span>
+openssl rsa -in aeronet.key -check -noout
+<span class="c"># Expected output: RSA key ok</span>
+
+<span class="c"># Cert must show CN=aeronet.local and correct dates</span>
+openssl x509 -in aeronet.crt -noout -subject -dates</pre>
+    </div>
+
+    <h3>Step 3 — Restart the full stack (not just nginx)</h3>
+    <div class="code-wrap">
+      <div class="code-label">bash<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre>cd /opt/aeronet-os
+docker compose -f infra/docker-compose.yml --env-file .env.secret down
+docker compose -f infra/docker-compose.yml --env-file .env.secret up -d</pre>
+    </div>
+
+    <div class="alert error">
+      <span class="alert-icon">✕</span>
+      <div class="alert-body">
+        <strong>Do not use <code>docker restart aeronet-nginx</code> after cert changes</strong>
+        <p>A bare <code>docker restart</code> bypasses Docker Compose's network management. The container may get a new internal IP while the NAT table retains the old one, causing a silent routing failure even though nginx appears healthy.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Fix NAT -->
+  <section class="section" id="fix-nat">
+    <div class="section-header">
+      <span class="section-num">05</span>
+      <h2>Fix: Stale Docker NAT rules</h2>
+    </div>
+    <p>If <code>curl -sk https://127.0.0.1</code> returns <strong>200</strong> from inside Virgilio but connections from outside are refused, the Docker NAT table likely has a stale container IP.</p>
+
+    <h3>Diagnose</h3>
+    <div class="code-wrap">
+      <div class="code-label">bash<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre><span class="c"># Get current nginx container IP</span>
+docker inspect aeronet-nginx \
+  --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+
+<span class="c"># Get what NAT is actually routing to</span>
+sudo nft list table ip nat | grep dnat
+
+<span class="c"># These two IPs must match — if they don't, NAT is stale</span></pre>
+    </div>
+
+    <h3>Fix — full compose cycle</h3>
+    <div class="code-wrap">
+      <div class="code-label">bash<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre>cd /opt/aeronet-os
+docker compose -f infra/docker-compose.yml --env-file .env.secret down
+docker compose -f infra/docker-compose.yml --env-file .env.secret up -d
+
+<span class="c"># Verify NAT now matches container IP</span>
+sudo nft list table ip nat | grep dnat
+docker inspect aeronet-nginx \
+  --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'</pre>
+    </div>
+
+    <h3>Nuclear option — restart Docker daemon</h3>
+    <p>If compose down/up does not flush the stale rules (rare), restart the Docker daemon to force a complete NAT rebuild:</p>
+    <div class="code-wrap">
+      <div class="code-label">bash<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre>sudo systemctl restart docker
+cd /opt/aeronet-os
+docker compose -f infra/docker-compose.yml --env-file .env.secret up -d</pre>
+    </div>
+  </section>
+
+  <!-- 6. Full stack restart -->
+  <section class="section" id="fix-stack">
+    <div class="section-header">
+      <span class="section-num">06</span>
+      <h2>Fix: Full stack restart procedure</h2>
+    </div>
+    <p>Use this procedure for any restart, not just after cert changes. It is the only safe way to restart — bare <code>docker restart</code> on individual containers is discouraged.</p>
+
+    <div class="code-wrap">
+      <div class="code-label">bash — canonical restart procedure<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre>cd /opt/aeronet-os
+
+<span class="c"># Tear everything down cleanly</span>
+docker compose -f infra/docker-compose.yml --env-file .env.secret down
+
+<span class="c"># Bring back up — postgres healthcheck gates dependent services</span>
+docker compose -f infra/docker-compose.yml --env-file .env.secret up -d
+
+<span class="c"># Confirm all 11 containers are Up</span>
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+
+<span class="c"># Tail logs for 30s to catch early failures</span>
+docker compose -f infra/docker-compose.yml logs -f --tail=20</pre>
+    </div>
+
+    <div class="alert warning">
+      <span class="alert-icon">⚠</span>
+      <div class="alert-body">
+        <strong>.env.secret must be present</strong>
+        <p>Running compose without <code>--env-file .env.secret</code> will start containers with blank passwords and keys. The file lives at <code>/opt/aeronet-os/.env.secret</code> and must not be deleted or moved.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. Diagnostic flowchart -->
+  <section class="section" id="diagnostic-flow">
+    <div class="section-header">
+      <span class="section-num">07</span>
+      <h2>Diagnostic flowchart — UI unreachable</h2>
+    </div>
+
+    <table class="data-table">
+      <thead>
+        <tr><th>Symptom</th><th>Command</th><th>If bad → fix</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>ERR_CONNECTION_REFUSED in browser</td>
+          <td><code>docker ps | grep nginx</code></td>
+          <td>Container not running → <a href="#fix-stack" style="color:var(--accent)">§06 full restart</a></td>
+        </tr>
+        <tr>
+          <td>nginx container exits immediately</td>
+          <td><code>docker logs aeronet-nginx --tail=30</code></td>
+          <td>"cannot load certificate" → <a href="#fix-tls" style="color:var(--accent)">§04 regen cert</a></td>
+        </tr>
+        <tr>
+          <td>nginx up, curl returns 000 from outside</td>
+          <td><code>curl -sk https://127.0.0.1 -w "%{http_code}"</code></td>
+          <td>Returns 200 internally → NAT issue → <a href="#fix-nat" style="color:var(--accent)">§05 flush NAT</a></td>
+        </tr>
+        <tr>
+          <td>NAT IP mismatch</td>
+          <td><code>sudo nft list table ip nat | grep dnat</code></td>
+          <td>IP ≠ container IP → compose down/up</td>
+        </tr>
+        <tr>
+          <td>Ports not bound on host</td>
+          <td><code>ss -tlnp | grep -E ':(80|443)'</code></td>
+          <td>Nothing listening → nginx crashed → check logs</td>
+        </tr>
+        <tr>
+          <td>API calls fail (502/504) but UI loads</td>
+          <td><code>docker logs aeronet-api-gateway --tail=30</code></td>
+          <td>DB connection error → check aeronet-postgres health</td>
+        </tr>
+        <tr>
+          <td>All containers up, still unreachable externally</td>
+          <td><code>sudo nft list table inet filter</code></td>
+          <td>Missing rule for port 80/443 on OUTSIDE interface</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 8. Known issues -->
+  <section class="section" id="known-issues">
+    <div class="section-header">
+      <span class="section-num">08</span>
+      <h2>Known issues registry</h2>
+    </div>
+
+    <div class="fix-grid">
+
+      <div class="fix-card open" onclick="toggleFix(this)">
+        <div class="fix-card-head">
+          <span class="fix-priority p-critical">CRITICAL</span>
+          <span class="fix-title">TLS cert missing on new server deployments</span>
+          <span class="fix-chevron">▸</span>
+        </div>
+        <div class="fix-card-body">
+          <p>The cert files are <strong>not committed to git</strong> (correctly — private keys must never be in source control). On any fresh clone or new server, <code>infra/nginx/certs/</code> will be empty. nginx will refuse to start. Always run the cert generation step in §04 immediately after cloning on a new host.</p>
+          <p><strong>Workaround:</strong> Add a <code>generate-certs.sh</code> script to the repo that runs the openssl command, to be executed once post-clone.</p>
+        </div>
+      </div>
+
+      <div class="fix-card" onclick="toggleFix(this)">
+        <div class="fix-card-head">
+          <span class="fix-priority p-critical">CRITICAL</span>
+          <span class="fix-title">Stale Docker NAT after bare docker restart</span>
+          <span class="fix-chevron">▸</span>
+        </div>
+        <div class="fix-card-body">
+          <p>Using <code>docker restart &lt;container&gt;</code> directly (instead of compose) can reassign container IPs while leaving the iptables-nft DNAT rules pointing to old IPs. Symptoms: nginx reports healthy internally, external connections silently refused. Fix: always use compose down/up. See §05.</p>
+        </div>
+      </div>
+
+      <div class="fix-card" onclick="toggleFix(this)">
+        <div class="fix-card-head">
+          <span class="fix-priority p-high">HIGH</span>
+          <span class="fix-title">compose restart warns about missing env vars</span>
+          <span class="fix-chevron">▸</span>
+        </div>
+        <div class="fix-card-body">
+          <p>Running <code>docker compose restart &lt;service&gt;</code> without <code>--env-file .env.secret</code> prints warnings like <em>"POSTGRES_PASSWORD variable is not set"</em> and also fails to find service names when the compose file uses variable interpolation in service names. Always pass <code>--env-file .env.secret</code>, or use <code>docker restart &lt;container-name&gt;</code> for single-container restarts when env vars aren't needed (e.g. nginx config reload).</p>
+        </div>
+      </div>
+
+      <div class="fix-card" onclick="toggleFix(this)">
+        <div class="fix-card-head">
+          <span class="fix-priority p-high">HIGH</span>
+          <span class="fix-title">Grafana stat panels show "No data"</span>
+          <span class="fix-chevron">▸</span>
+        </div>
+        <div class="fix-card-body">
+          <p>Expected until devices are added to the inventory. PostgreSQL-backed panels require rows in the <code>devices</code> table. Prometheus panels work immediately. No fix needed — use the Discovery page to scan and register devices.</p>
+        </div>
+      </div>
+
+      <div class="fix-card" onclick="toggleFix(this)">
+        <div class="fix-card-head">
+          <span class="fix-priority p-medium">MEDIUM</span>
+          <span class="fix-title">MIST collector POLL_ERROR / ADAPTIVE_SLOWDOWN</span>
+          <span class="fix-chevron">▸</span>
+        </div>
+        <div class="fix-card-body">
+          <p>Expected behaviour when <code>MIST_API_TOKEN</code> and <code>MIST_SITE_ID</code> are placeholder values in <code>.env.secret</code>. The collector uses exponential backoff so these warnings are harmless. Resolve by populating real Juniper MIST credentials.</p>
+        </div>
+      </div>
+
+      <div class="fix-card" onclick="toggleFix(this)">
+        <div class="fix-card-head">
+          <span class="fix-priority p-medium">MEDIUM</span>
+          <span class="fix-title">Server is being actively scanned by internet bots</span>
+          <span class="fix-chevron">▸</span>
+        </div>
+        <div class="fix-card-body">
+          <p>With ports 80/443 exposed directly to the internet (Firezone VPN not yet deployed), nginx logs will show constant probe traffic from Censys, Palo Alto Xpanse, and various exploit scanners. This is normal for any internet-exposed IP. The React app returns HTTP 200 for all paths (SPA fallback), so scanners see a response but gain nothing. Priority: implement Phase 3 Firezone WireGuard VPN to lock down 80/443.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 9. Security notes -->
+  <section class="section" id="security-notes">
+    <div class="section-header">
+      <span class="section-num">09</span>
+      <h2>Security notes</h2>
+    </div>
+
+    <div class="alert success">
+      <span class="alert-icon">✓</span>
+      <div class="alert-body">
+        <strong>Active hardening measures</strong>
+        <p>SSH on port 2222 (key-only), nftables default-drop, fail2ban (3 attempts / 1hr ban), auditd ISO 27001 rules, no inter-VLAN routing, IP forwarding disabled, all secrets Fernet-encrypted at rest.</p>
+      </div>
+    </div>
+
+    <h3>fail2ban — check and unban</h3>
+    <div class="code-wrap">
+      <div class="code-label">bash<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre><span class="c"># Check currently banned IPs</span>
+sudo fail2ban-client status sshd
+
+<span class="c"># Unban a specific IP (e.g. your own after lockout)</span>
+sudo fail2ban-client set sshd unbanip &lt;YOUR_IP&gt;
+
+<span class="c"># View nftables banned set directly</span>
+sudo nft list set inet f2b-table addr-set-sshd</pre>
+    </div>
+
+    <h3>nftables — verify rules intact</h3>
+    <div class="code-wrap">
+      <div class="code-label">bash<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre><span class="c"># Full ruleset — confirm input chain has default drop policy</span>
+sudo nft list table inet filter
+
+<span class="c"># Expected input chain policy: drop</span>
+<span class="c"># Expected: port 2222, 80, 443 accepted on OUTSIDE interface</span>
+<span class="c"># Expected: INSIDE.4 fully accepted (management VLAN)</span></pre>
+    </div>
+
+    <div class="alert warning">
+      <span class="alert-icon">⚠</span>
+      <div class="alert-body">
+        <strong>Pending: Phase 3 — Firezone WireGuard VPN</strong>
+        <p>Ports 80 and 443 are currently exposed directly to the internet. Once Firezone is deployed, these should be locked to VPN clients only, eliminating the bot scan surface entirely.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10. Reference -->
+  <section class="section" id="reference">
+    <div class="section-header">
+      <span class="section-num">10</span>
+      <h2>Quick reference</h2>
+    </div>
+
+    <h3>Access URLs (add to /etc/hosts on client)</h3>
+    <div class="code-wrap">
+      <div class="code-label">hosts file entry<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre>216.152.167.28  aeronet.local api.aeronet.local grafana.aeronet.local</pre>
+    </div>
+
+    <table class="data-table">
+      <thead><tr><th>Service</th><th>URL</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>AeroNet UI</td><td><code>https://aeronet.local</code></td><td>React frontend, JWT auth</td></tr>
+        <tr><td>API + Swagger</td><td><code>https://api.aeronet.local/docs</code></td><td>FastAPI, interactive docs</td></tr>
+        <tr><td>Grafana</td><td><code>https://grafana.aeronet.local</code></td><td>JWT-gated via portal container</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Container name → service mapping</h3>
+    <table class="data-table">
+      <thead><tr><th>Container</th><th>Role</th><th>Internal port</th></tr></thead>
+      <tbody>
+        <tr><td>aeronet-nginx</td><td>TLS termination, reverse proxy</td><td>80, 443 → host</td></tr>
+        <tr><td>aeronet-api-gateway</td><td>FastAPI, RBAC, JWT</td><td>8000</td></tr>
+        <tr><td>aeronet-postgres</td><td>Primary database</td><td>5432</td></tr>
+        <tr><td>infra-frontend-1</td><td>React + Vite UI</td><td>5173</td></tr>
+        <tr><td>infra-grafana-1</td><td>Dashboards</td><td>3000</td></tr>
+        <tr><td>aeronet-prometheus</td><td>Metrics</td><td>9090</td></tr>
+        <tr><td>infra-enroller-1</td><td>Nmap discovery, Scrapli SSH</td><td>8002</td></tr>
+        <tr><td>infra-collector-1</td><td>Juniper MIST polling</td><td>8003</td></tr>
+        <tr><td>infra-notifier-1</td><td>Telegram + Twilio alerts</td><td>8001</td></tr>
+        <tr><td>infra-portal-1</td><td>Go JWT-gated Grafana proxy</td><td>8080</td></tr>
+        <tr><td>aeronet-pg-exporter</td><td>DB metrics for Prometheus</td><td>9187</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Reset admin password</h3>
+    <div class="code-wrap">
+      <div class="code-label">bash<button class="copy-btn" onclick="copyCode(this)">copy</button></div>
+      <pre>source ~/aeronet-venv/bin/activate
+HASH=$(python3 -c "import bcrypt; print(bcrypt.hashpw(b'NEWPASSWORD', bcrypt.gensalt(12)).decode())")
+docker exec aeronet-postgres psql -U aeronet -d aeronet \
+  -c "UPDATE users SET hashed_password='$HASH', is_active=true WHERE username='admin';"</pre>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="doc-footer">
+    <span>AeroNet OS · <a href="https://github.com/AirFexLABS/aeronet-os" style="color:var(--accent);text-decoration:none;">AirFexLABS/aeronet-os</a> · Apache 2.0</span>
+    <span>Last incident: 2026-03-28 · Resolved</span>
+  </footer>
+
+</div>
+
+<script>
+function toggleFix(card) {
+  card.classList.toggle('open');
+}
+
+function copyCode(btn) {
+  const pre = btn.closest('.code-wrap').querySelector('pre');
+  const text = pre.innerText || pre.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+// Open all fix cards initially closed except first
+document.querySelectorAll('.fix-card').forEach((card, i) => {
+  if (i > 0) card.classList.remove('open');
+});
+</script>
+</body>
+</html>
