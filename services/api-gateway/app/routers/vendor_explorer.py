@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from ..dependencies import require_role
@@ -34,6 +34,10 @@ class EndpointCreate(BaseModel):
 class PollUpdate(BaseModel):
     poll_enabled: bool
     poll_interval_s: int = 300
+
+
+class ExecuteBody(BaseModel):
+    path_params: dict[str, str] | None = None
 
 
 class FieldMappingCreate(BaseModel):
@@ -247,7 +251,10 @@ async def delete_vendor_endpoint(endpoint_id: int):
     "/vendor-endpoints/{endpoint_id}/execute",
     dependencies=[Depends(require_role(Role.ADMIN))],
 )
-async def execute_vendor_endpoint(endpoint_id: int):
+async def execute_vendor_endpoint(
+    endpoint_id: int,
+    body: ExecuteBody | None = Body(default=None),
+):
     pool = await db.get_pool()
     row = await pool.fetchrow(
         "SELECT ve.path, ve.method, vc.base_url, vc.auth_type, vc.credentials "
@@ -262,7 +269,12 @@ async def execute_vendor_endpoint(endpoint_id: int):
     creds = json.loads(vault.decrypt(row["credentials"]))
     headers = _build_auth_headers(row["auth_type"], creds)
     base_url = row["base_url"].rstrip("/")
-    path = _substitute_path_params(row["path"], creds)
+
+    # Merge: credentials provide defaults, body.path_params override
+    merged_params = dict(creds)
+    if body and body.path_params:
+        merged_params.update(body.path_params)
+    path = _substitute_path_params(row["path"], merged_params)
     url = f"{base_url}{path}"
 
     try:
@@ -274,6 +286,7 @@ async def execute_vendor_endpoint(endpoint_id: int):
 
         if resp.status_code >= 400:
             return {
+                "resolved_url": url,
                 "error": f"HTTP {resp.status_code}",
                 "body": resp.text[:2000],
                 "raw": None,
@@ -284,7 +297,12 @@ async def execute_vendor_endpoint(endpoint_id: int):
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Vendor API error: {exc}")
     except Exception:
-        return {"error": "Invalid JSON response", "raw": None, "fields": []}
+        return {
+            "resolved_url": url,
+            "error": "Invalid JSON response",
+            "raw": None,
+            "fields": [],
+        }
 
     # Update last_polled
     await pool.execute(
@@ -292,7 +310,7 @@ async def execute_vendor_endpoint(endpoint_id: int):
     )
 
     fields = _flatten_json(raw)
-    return {"raw": raw, "fields": fields}
+    return {"resolved_url": url, "raw": raw, "fields": fields}
 
 
 # ── PUT /vendor-endpoints/{id}/poll — toggle polling ─────────────────────

@@ -9,6 +9,28 @@ import {
   VendorTestResult,
 } from "../api/client";
 
+/* ── Types ─────────────────────────────────────────────────────────────── */
+
+interface CachedSite {
+  id: string;
+  name: string;
+  address: string;
+}
+
+/* ── Helpers ───────────────────────────────────────────────────────────── */
+
+/** Extract {param} placeholders from a path, excluding org_id (auto-filled). */
+function extractUserParams(path: string): string[] {
+  const matches = path.match(/\{(\w+)\}/g) || [];
+  return matches.map((m) => m.slice(1, -1)).filter((p) => p !== "org_id");
+}
+
+/** "ATL SkyClub - C37" → "ATL" */
+function airportCode(name: string): string {
+  const first = name.split(" ")[0];
+  return first && first.length >= 3 ? first.substring(0, 3).toUpperCase() : "---";
+}
+
 /* ── Toast ─────────────────────────────────────────────────────────────── */
 
 function Toast({
@@ -293,7 +315,11 @@ function AddConfigModal({
           <button onClick={onClose} className={btnCancel}>
             Cancel
           </button>
-          <button onClick={handleSubmit} disabled={saving} className={btnPrimary}>
+          <button
+            onClick={handleSubmit}
+            disabled={saving}
+            className={btnPrimary}
+          >
             {saving ? "Saving..." : "Save Config"}
           </button>
         </div>
@@ -560,6 +586,19 @@ export function VendorExplorer() {
   const [fieldMappings, setFieldMappings] = useState<VendorFieldMapping[]>([]);
   const [savingField, setSavingField] = useState<FlattenedField | null>(null);
 
+  /* site cache — keyed by vendor config id */
+  const [sitesCache, setSitesCache] = useState<Record<number, CachedSite[]>>(
+    {}
+  );
+  const [activeSiteId, setActiveSiteId] = useState<string | null>(null);
+  const [activeSiteName, setActiveSiteName] = useState<string | null>(null);
+  const [showSitesTable, setShowSitesTable] = useState(false);
+
+  /* inline parameter bar */
+  const [pendingExecuteEp, setPendingExecuteEp] =
+    useState<VendorEndpoint | null>(null);
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
+
   /* toast */
   const [toast, setToast] = useState<{
     message: string;
@@ -572,6 +611,10 @@ export function VendorExplorer() {
     },
     []
   );
+
+  /* derived: current sites for the selected vendor config */
+  const currentSites =
+    selectedConfigId !== null ? sitesCache[selectedConfigId] ?? [] : [];
 
   /* ── Fetch configs on mount ─────────────────────────────────────────── */
   useEffect(() => {
@@ -592,6 +635,10 @@ export function VendorExplorer() {
     setSelectedEndpointId(null);
     setExecuteResult(null);
     setFieldMappings([]);
+    setActiveSiteId(null);
+    setActiveSiteName(null);
+    setPendingExecuteEp(null);
+    setShowSitesTable(false);
     api.vendorExplorer.endpoints
       .list(selectedConfigId)
       .then(setEndpoints)
@@ -611,12 +658,122 @@ export function VendorExplorer() {
       .catch(() => {});
   }, [selectedEndpointId]);
 
-  /* ── Handlers ───────────────────────────────────────────────────────── */
+  /* ── Site caching ───────────────────────────────────────────────────── */
+
+  function maybeCacheSites(
+    ep: VendorEndpoint,
+    result: ExecuteResult,
+    configId: number
+  ) {
+    const isSitesEndpoint =
+      ep.name.toLowerCase().includes("list sites") ||
+      (ep.path.includes("/sites") && !ep.path.includes("{site_id}"));
+
+    if (!isSitesEndpoint || !Array.isArray(result.raw)) return;
+
+    const sites: CachedSite[] = [];
+    for (const item of result.raw as Record<string, unknown>[]) {
+      if (item.id && item.name) {
+        sites.push({
+          id: String(item.id),
+          name: String(item.name),
+          address: String(item.address ?? ""),
+        });
+      }
+    }
+
+    if (sites.length > 0) {
+      setSitesCache((prev) => ({ ...prev, [configId]: sites }));
+      setShowSitesTable(true);
+      showToast(`${sites.length} sites cached`);
+    }
+  }
+
+  /* ── Execute logic ──────────────────────────────────────────────────── */
+
+  function handleExecuteClick(ep: VendorEndpoint) {
+    const userParams = extractUserParams(ep.path);
+
+    // No user-facing params → execute immediately
+    if (userParams.length === 0) {
+      doExecute(ep.id, {});
+      return;
+    }
+
+    // Try to auto-fill all params
+    const autoFilled: Record<string, string> = {};
+    let allResolved = true;
+
+    for (const param of userParams) {
+      if (param === "site_id" && activeSiteId) {
+        autoFilled.site_id = activeSiteId;
+      } else {
+        allResolved = false;
+      }
+    }
+
+    if (allResolved) {
+      doExecute(ep.id, autoFilled);
+      return;
+    }
+
+    // Show inline parameter bar
+    setPendingExecuteEp(ep);
+    setParamValues(autoFilled);
+  }
+
+  async function doExecute(
+    endpointId: number,
+    pathParams: Record<string, string>
+  ) {
+    setExecuting(true);
+    setExecuteResult(null);
+    setSelectedEndpointId(endpointId);
+    setPendingExecuteEp(null);
+
+    // If we're executing with a site_id, persist it as active
+    if (pathParams.site_id) {
+      setActiveSiteId(pathParams.site_id);
+      const site = currentSites.find((s) => s.id === pathParams.site_id);
+      setActiveSiteName(site?.name ?? pathParams.site_id.substring(0, 8) + "\u2026");
+    }
+
+    try {
+      const hasParams = Object.keys(pathParams).length > 0;
+      const result = await api.vendorExplorer.endpoints.execute(
+        endpointId,
+        hasParams ? pathParams : undefined
+      );
+      setExecuteResult(result);
+
+      if (result.error) {
+        showToast(`API error: ${result.error}`, "error");
+      } else {
+        showToast(`Received ${result.fields?.length ?? 0} fields`);
+
+        // Cache sites if this looks like a sites response
+        const ep = endpoints.find((e) => e.id === endpointId);
+        if (ep && selectedConfigId !== null) {
+          maybeCacheSites(ep, result, selectedConfigId);
+        }
+      }
+    } catch (e: unknown) {
+      showToast(
+        e instanceof Error ? e.message : "Execute failed",
+        "error"
+      );
+    } finally {
+      setExecuting(false);
+    }
+  }
+
+  /* ── Other handlers ─────────────────────────────────────────────────── */
 
   async function handleTestConfig(id: number) {
     setTesting(id);
     try {
-      const result: VendorTestResult = await api.vendorExplorer.configs.test(id);
+      const result: VendorTestResult =
+        await api.vendorExplorer.configs.test(id);
       showToast(
         result.ok
           ? `Connected \u2014 ${result.latency_ms}ms`
@@ -639,28 +796,6 @@ export function VendorExplorer() {
       showToast("Config deleted");
     } catch {
       showToast("Failed to delete config", "error");
-    }
-  }
-
-  async function handleExecute(endpointId: number) {
-    setExecuting(true);
-    setExecuteResult(null);
-    setSelectedEndpointId(endpointId);
-    try {
-      const result = await api.vendorExplorer.endpoints.execute(endpointId);
-      setExecuteResult(result);
-      if (result.error) {
-        showToast(`API error: ${result.error}`, "error");
-      } else {
-        showToast(`Received ${result.fields?.length ?? 0} fields`);
-      }
-    } catch (e: unknown) {
-      showToast(
-        e instanceof Error ? e.message : "Execute failed",
-        "error"
-      );
-    } finally {
-      setExecuting(false);
     }
   }
 
@@ -809,12 +944,36 @@ export function VendorExplorer() {
               {/* ── Panel 2: Endpoints ──────────────────────────────────── */}
               <div className="border-b border-white/10 max-h-[40%] flex flex-col shrink-0">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-                  <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
-                    Endpoints &mdash; {selectedConfig?.display_name}
-                  </span>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-xs font-semibold text-secondary uppercase tracking-wider shrink-0">
+                      Endpoints &mdash; {selectedConfig?.display_name}
+                    </span>
+                    {activeSiteName && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-primary/15 text-primary text-xs rounded-full shrink-0">
+                        Active Site: {activeSiteName}
+                        <button
+                          onClick={() => {
+                            setActiveSiteId(null);
+                            setActiveSiteName(null);
+                          }}
+                          className="text-primary/60 hover:text-primary"
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    )}
+                    {currentSites.length > 0 && (
+                      <button
+                        onClick={() => setShowSitesTable((p) => !p)}
+                        className="text-xs text-secondary/50 hover:text-primary transition shrink-0"
+                      >
+                        {currentSites.length} sites
+                      </button>
+                    )}
+                  </div>
                   <button
                     onClick={() => setShowAddEndpoint(true)}
-                    className="text-xs text-primary hover:text-primary/80 font-medium transition"
+                    className="text-xs text-primary hover:text-primary/80 font-medium transition shrink-0"
                   >
                     + Add Endpoint
                   </button>
@@ -902,7 +1061,7 @@ export function VendorExplorer() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleExecute(ep.id);
+                                  handleExecuteClick(ep);
                                 }}
                                 disabled={executing}
                                 className="text-xs text-primary hover:text-primary/80 font-medium disabled:opacity-50"
@@ -929,17 +1088,164 @@ export function VendorExplorer() {
                 </div>
               </div>
 
+              {/* ── Inline Parameter Bar ────────────────────────────────── */}
+              {pendingExecuteEp && (
+                <div className="px-4 py-3 bg-white/[0.02] border-b border-white/10 flex items-center gap-3 shrink-0 flex-wrap">
+                  <span className="text-xs text-secondary font-semibold uppercase tracking-wider shrink-0">
+                    Parameters
+                  </span>
+                  {extractUserParams(pendingExecuteEp.path).map((param) => (
+                    <div key={param} className="flex items-center gap-2">
+                      <label className="text-xs text-secondary capitalize shrink-0">
+                        {param.replace(/_/g, " ")}:
+                      </label>
+                      {param === "site_id" && currentSites.length > 0 ? (
+                        <select
+                          className="bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm text-primary focus:outline-none focus:ring-1 focus:ring-primary/50 max-w-xs"
+                          value={paramValues[param] || ""}
+                          onChange={(e) =>
+                            setParamValues((prev) => ({
+                              ...prev,
+                              [param]: e.target.value,
+                            }))
+                          }
+                        >
+                          <option value="">Select a site...</option>
+                          {currentSites.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          className="bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm text-primary placeholder:text-secondary/40 focus:outline-none focus:ring-1 focus:ring-primary/50 w-72"
+                          value={paramValues[param] || ""}
+                          onChange={(e) =>
+                            setParamValues((prev) => ({
+                              ...prev,
+                              [param]: e.target.value,
+                            }))
+                          }
+                          placeholder={
+                            param === "site_id"
+                              ? "Run 'List Sites' first for picker"
+                              : `Enter ${param.replace(/_/g, " ")}`
+                          }
+                        />
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    onClick={() =>
+                      doExecute(pendingExecuteEp.id, { ...paramValues })
+                    }
+                    disabled={
+                      executing ||
+                      extractUserParams(pendingExecuteEp.path).some(
+                        (p) => !paramValues[p]
+                      )
+                    }
+                    className="px-3 py-1.5 bg-primary text-black text-xs font-medium rounded-lg hover:bg-primary/80 disabled:opacity-50 transition shrink-0"
+                  >
+                    Execute
+                  </button>
+                  <button
+                    onClick={() => setPendingExecuteEp(null)}
+                    className="text-xs text-secondary hover:text-primary transition shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {/* ── Sites Table (collapsible) ──────────────────────────── */}
+              {showSitesTable && currentSites.length > 0 && (
+                <div className="border-b border-white/10 max-h-48 flex flex-col shrink-0">
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-white/[0.02] shrink-0">
+                    <span className="text-xs text-secondary">
+                      {currentSites.length} sites loaded
+                    </span>
+                    <button
+                      onClick={() => setShowSitesTable(false)}
+                      className="text-xs text-secondary hover:text-primary transition"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                  <div className="overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-secondary/60 uppercase border-b border-white/5 sticky top-0 bg-surface">
+                          <th className="text-left px-4 py-1.5 font-medium">
+                            Site Name
+                          </th>
+                          <th className="text-left px-2 py-1.5 font-medium w-16">
+                            Airport
+                          </th>
+                          <th className="text-left px-2 py-1.5 font-medium">
+                            Address
+                          </th>
+                          <th className="text-left px-2 py-1.5 font-medium w-28">
+                            ID
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentSites.map((s) => (
+                          <tr
+                            key={s.id}
+                            onClick={() => {
+                              setActiveSiteId(s.id);
+                              setActiveSiteName(s.name);
+                            }}
+                            className={`border-b border-white/5 cursor-pointer transition ${
+                              activeSiteId === s.id
+                                ? "bg-primary/10"
+                                : "hover:bg-white/5"
+                            }`}
+                          >
+                            <td className="px-4 py-1.5 text-primary">
+                              {s.name}
+                            </td>
+                            <td className="px-2 py-1.5 text-secondary font-mono">
+                              {airportCode(s.name)}
+                            </td>
+                            <td className="px-2 py-1.5 text-secondary/60 truncate max-w-[250px]">
+                              {s.address || "\u2014"}
+                            </td>
+                            <td className="px-2 py-1.5 text-secondary/40 font-mono">
+                              {s.id.substring(0, 8)}&hellip;
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* ── Bottom: Panel 3 + Panel 4 ──────────────────────────── */}
               <div className="flex-1 flex overflow-hidden min-h-0">
                 {/* ── Panel 3: Response Explorer ────────────────────────── */}
                 <div className="flex-1 border-r border-white/10 flex flex-col overflow-hidden min-w-0">
                   <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 shrink-0">
-                    <span className="text-xs font-semibold text-secondary uppercase tracking-wider mr-auto">
-                      Response
-                    </span>
+                    <div className="mr-auto min-w-0">
+                      <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
+                        Response
+                      </span>
+                      {executeResult?.resolved_url && (
+                        <p
+                          className="text-xs text-secondary/40 font-mono mt-0.5 truncate"
+                          title={executeResult.resolved_url}
+                        >
+                          {executeResult.resolved_url}
+                        </p>
+                      )}
+                    </div>
                     <button
                       onClick={() => setResponseTab("fields")}
-                      className={`text-xs px-2 py-1 rounded transition ${
+                      className={`text-xs px-2 py-1 rounded transition shrink-0 ${
                         responseTab === "fields"
                           ? "bg-primary/20 text-primary"
                           : "text-secondary hover:text-primary"
@@ -949,7 +1255,7 @@ export function VendorExplorer() {
                     </button>
                     <button
                       onClick={() => setResponseTab("raw")}
-                      className={`text-xs px-2 py-1 rounded transition ${
+                      className={`text-xs px-2 py-1 rounded transition shrink-0 ${
                         responseTab === "raw"
                           ? "bg-primary/20 text-primary"
                           : "text-secondary hover:text-primary"

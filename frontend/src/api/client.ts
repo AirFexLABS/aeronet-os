@@ -251,6 +251,7 @@ export interface ExecuteResult {
   fields: FlattenedField[];
   error?: string;
   body?: string;
+  resolved_url?: string;
 }
 
 export interface VendorTestResult {
@@ -445,9 +446,12 @@ export const api = {
         }),
       delete: (id: number) =>
         request<void>(`/vendor-endpoints/${id}`, { method: "DELETE" }),
-      execute: (id: number) =>
+      execute: (id: number, pathParams?: Record<string, string>) =>
         request<ExecuteResult>(`/vendor-endpoints/${id}/execute`, {
           method: "POST",
+          body: pathParams
+            ? JSON.stringify({ path_params: pathParams })
+            : undefined,
         }),
       updatePoll: (
         id: number,
