@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS vendor_endpoints (
     poll_enabled     BOOLEAN DEFAULT false,
     poll_interval_s  INTEGER DEFAULT 300,
     last_polled      TIMESTAMPTZ,
-    created_at       TIMESTAMPTZ DEFAULT NOW()
+    created_at       TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (vendor_config_id, name, path)
 );
 
 CREATE TABLE IF NOT EXISTS vendor_field_mappings (

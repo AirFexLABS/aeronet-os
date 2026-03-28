@@ -592,12 +592,13 @@ export function VendorExplorer() {
   const [loadingEndpoints, setLoadingEndpoints] = useState(false);
   const [showAddEndpoint, setShowAddEndpoint] = useState(false);
 
-  /* execute */
-  const [executeResult, setExecuteResult] = useState<ExecuteResult | null>(
-    null
-  );
+  /* execute — per-endpoint results */
+  const [executeResults, setExecuteResults] = useState<Record<number, ExecuteResult>>({});
   const [executing, setExecuting] = useState(false);
   const [responseTab, setResponseTab] = useState<"raw" | "fields">("fields");
+
+  /* endpoint mappings cache — keyed by endpoint id */
+  const [endpointMappingsCache, setEndpointMappingsCache] = useState<Record<number, VendorFieldMapping[]>>({});
 
   /* field mappings */
   const [fieldMappings, setFieldMappings] = useState<VendorFieldMapping[]>([]);
@@ -637,6 +638,7 @@ export function VendorExplorer() {
   const [newTplDisplayNames, setNewTplDisplayNames] = useState<Record<string, string>>({});
   const [newTplFieldSearch, setNewTplFieldSearch] = useState("");
   const [newTplSaving, setNewTplSaving] = useState(false);
+  const [collapsedEndpointGroups, setCollapsedEndpointGroups] = useState<Set<number>>(new Set());
 
   /* toast */
   const [toast, setToast] = useState<{
@@ -672,7 +674,8 @@ export function VendorExplorer() {
     }
     setLoadingEndpoints(true);
     setSelectedEndpointId(null);
-    setExecuteResult(null);
+    setExecuteResults({});
+    setEndpointMappingsCache({});
     setFieldMappings([]);
     setActiveSiteId(null);
     setActiveSiteName(null);
@@ -696,6 +699,20 @@ export function VendorExplorer() {
       .then(setFieldMappings)
       .catch(() => {});
   }, [selectedEndpointId]);
+
+  /* ── Load field mappings for ALL endpoints (for template picker) ──── */
+  useEffect(() => {
+    if (endpoints.length === 0) return;
+    const cache: Record<number, VendorFieldMapping[]> = {};
+    Promise.all(
+      endpoints.map((ep) =>
+        api.vendorExplorer.fields
+          .list(ep.id)
+          .then((mappings) => { cache[ep.id] = mappings; })
+          .catch(() => { cache[ep.id] = []; })
+      )
+    ).then(() => setEndpointMappingsCache(cache));
+  }, [endpoints]);
 
   /* ── Site caching ───────────────────────────────────────────────────── */
 
@@ -831,6 +848,7 @@ export function VendorExplorer() {
     setNewTplDesc("");
     setNewTplScope("vendor");
     setNewTplSiteGroup("");
+    setCollapsedEndpointGroups(new Set());
   }
 
   function toggleFieldSelection(path: string) {
@@ -855,13 +873,17 @@ export function VendorExplorer() {
   function handleSelectAllVisible() {
     setNewTplSelectedPaths((prev) => {
       const next = new Set(prev);
-      for (const f of newTplFields) next.add(f.path);
+      for (const g of newTplFieldGroups) {
+        for (const f of g.fields) next.add(f.path);
+      }
       return next;
     });
     setNewTplDisplayNames((prev) => {
       const next = { ...prev };
-      for (const f of newTplFields) {
-        if (!next[f.path]) next[f.path] = pathToDisplayName(f.path);
+      for (const g of newTplFieldGroups) {
+        for (const f of g.fields) {
+          if (!next[f.path]) next[f.path] = pathToDisplayName(f.path);
+        }
       }
       return next;
     });
@@ -870,7 +892,45 @@ export function VendorExplorer() {
   function handleDeselectAllVisible() {
     setNewTplSelectedPaths((prev) => {
       const next = new Set(prev);
-      for (const f of newTplFields) next.delete(f.path);
+      for (const g of newTplFieldGroups) {
+        for (const f of g.fields) next.delete(f.path);
+      }
+      return next;
+    });
+  }
+
+  function handleSelectAllInGroup(epId: number) {
+    const group = newTplFieldGroups.find((g) => g.endpoint.id === epId);
+    if (!group) return;
+    setNewTplSelectedPaths((prev) => {
+      const next = new Set(prev);
+      for (const f of group.fields) next.add(f.path);
+      return next;
+    });
+    setNewTplDisplayNames((prev) => {
+      const next = { ...prev };
+      for (const f of group.fields) {
+        if (!next[f.path]) next[f.path] = pathToDisplayName(f.path);
+      }
+      return next;
+    });
+  }
+
+  function handleDeselectAllInGroup(epId: number) {
+    const group = newTplFieldGroups.find((g) => g.endpoint.id === epId);
+    if (!group) return;
+    setNewTplSelectedPaths((prev) => {
+      const next = new Set(prev);
+      for (const f of group.fields) next.delete(f.path);
+      return next;
+    });
+  }
+
+  function toggleEndpointGroupCollapse(epId: number) {
+    setCollapsedEndpointGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(epId)) next.delete(epId);
+      else next.add(epId);
       return next;
     });
   }
@@ -889,21 +949,25 @@ export function VendorExplorer() {
           newTplScope === "site_group" ? newTplSiteGroup || undefined : undefined,
       });
 
-      const allFields = executeResult?.fields ?? [];
-      for (const f of allFields) {
-        if (!newTplSelectedPaths.has(f.path)) continue;
-        await api.vendorExplorer.templates.addField(tpl.id, {
-          json_path: f.path,
-          display_name:
-            newTplDisplayNames[f.path] || pathToDisplayName(f.path),
-          data_type: f.type || "string",
-        });
+      // Collect all unique fields across all endpoint groups
+      const added = new Set<string>();
+      for (const g of newTplFieldGroups) {
+        for (const f of g.fields) {
+          if (!newTplSelectedPaths.has(f.path) || added.has(f.path)) continue;
+          added.add(f.path);
+          await api.vendorExplorer.templates.addField(tpl.id, {
+            json_path: f.path,
+            display_name:
+              newTplDisplayNames[f.path] || pathToDisplayName(f.path),
+            data_type: f.type || "string",
+          });
+        }
       }
 
-      tpl.field_count = newTplSelectedPaths.size;
+      tpl.field_count = added.size;
       setTemplates((prev) => [...prev, tpl]);
       setShowNewTemplateForm(false);
-      showToast(`Template saved with ${newTplSelectedPaths.size} fields`);
+      showToast(`Template saved with ${added.size} fields`);
     } catch (e: unknown) {
       showToast(
         e instanceof Error ? e.message : "Failed to create template",
@@ -930,6 +994,11 @@ export function VendorExplorer() {
 
   const selectedConfig = configs.find((c) => c.id === selectedConfigId);
 
+  /* derived: current execute result for the selected endpoint */
+  const currentExecResult = selectedEndpointId !== null
+    ? executeResults[selectedEndpointId] ?? null
+    : null;
+
   /* templates filtered for current vendor */
   const vendorTemplates = selectedConfig
     ? templates.filter((t) => t.vendor === selectedConfig.vendor)
@@ -940,16 +1009,50 @@ export function VendorExplorer() {
     return Array.from(set);
   }, [configs]);
 
-  const newTplFields = useMemo(() => {
-    if (!executeResult?.fields) return [];
+  /** Grouped fields for the New Template picker — one group per endpoint */
+  const newTplFieldGroups = useMemo(() => {
     const search = newTplFieldSearch.toLowerCase();
-    if (!search) return executeResult.fields;
-    return executeResult.fields.filter(
-      (f) =>
-        f.path.toLowerCase().includes(search) ||
-        String(f.value).toLowerCase().includes(search)
-    );
-  }, [executeResult?.fields, newTplFieldSearch]);
+    return endpoints
+      .map((ep) => {
+        // Merge execute result fields + saved mappings (dedupe by path)
+        const seen = new Set<string>();
+        const fields: FlattenedField[] = [];
+
+        // Execute results first (they have sample values)
+        const execFields = executeResults[ep.id]?.fields ?? [];
+        for (const f of execFields) {
+          if (!seen.has(f.path)) {
+            seen.add(f.path);
+            fields.push(f);
+          }
+        }
+
+        // Then saved mappings (convert to FlattenedField shape)
+        const mappings = endpointMappingsCache[ep.id] ?? [];
+        for (const m of mappings) {
+          if (!seen.has(m.json_path)) {
+            seen.add(m.json_path);
+            fields.push({
+              path: m.json_path,
+              value: `(saved: ${m.display_name})`,
+              type: m.data_type,
+            });
+          }
+        }
+
+        // Apply search filter
+        const filtered = search
+          ? fields.filter(
+              (f) =>
+                f.path.toLowerCase().includes(search) ||
+                String(f.value).toLowerCase().includes(search)
+            )
+          : fields;
+
+        return { endpoint: ep, fields: filtered };
+      })
+      .filter((g) => g.fields.length > 0);
+  }, [endpoints, executeResults, endpointMappingsCache, newTplFieldSearch]);
 
   /* ── Execute logic ──────────────────────────────────────────────────── */
 
@@ -989,7 +1092,6 @@ export function VendorExplorer() {
     pathParams: Record<string, string>
   ) {
     setExecuting(true);
-    setExecuteResult(null);
     setSelectedEndpointId(endpointId);
     setPendingExecuteEp(null);
 
@@ -1006,7 +1108,7 @@ export function VendorExplorer() {
         endpointId,
         hasParams ? pathParams : undefined
       );
-      setExecuteResult(result);
+      setExecuteResults((prev) => ({ ...prev, [endpointId]: result }));
 
       if (result.error) {
         showToast(`API error: ${result.error}`, "error");
@@ -1082,8 +1184,12 @@ export function VendorExplorer() {
       setEndpoints((prev) => prev.filter((e) => e.id !== id));
       if (selectedEndpointId === id) {
         setSelectedEndpointId(null);
-        setExecuteResult(null);
       }
+      setExecuteResults((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
       showToast("Endpoint deleted");
     } catch {
       showToast("Failed to delete endpoint", "error");
@@ -1532,12 +1638,12 @@ export function VendorExplorer() {
                       <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
                         Response
                       </span>
-                      {executeResult?.resolved_url && (
+                      {currentExecResult?.resolved_url && (
                         <p
                           className="text-xs text-secondary/40 font-mono mt-0.5 truncate"
-                          title={executeResult.resolved_url}
+                          title={currentExecResult.resolved_url}
                         >
-                          {executeResult.resolved_url}
+                          {currentExecResult.resolved_url}
                         </p>
                       )}
                     </div>
@@ -1581,22 +1687,22 @@ export function VendorExplorer() {
                   <div className="flex-1 overflow-auto p-4">
                     {executing ? (
                       <SkeletonRows count={6} />
-                    ) : !executeResult ? (
+                    ) : !currentExecResult ? (
                       <p className="text-xs text-secondary/40 text-center py-8">
                         Execute an endpoint to see its response
                       </p>
-                    ) : executeResult.error ? (
+                    ) : currentExecResult.error ? (
                       <div className="text-sm text-red-400 p-3 bg-red-500/10 rounded-lg">
-                        {executeResult.error}
-                        {executeResult.body && (
+                        {currentExecResult.error}
+                        {currentExecResult.body && (
                           <pre className="mt-2 text-xs text-secondary whitespace-pre-wrap">
-                            {executeResult.body}
+                            {currentExecResult.body}
                           </pre>
                         )}
                       </div>
                     ) : responseTab === "raw" ? (
                       <pre className="text-xs text-secondary font-mono whitespace-pre-wrap break-all">
-                        {JSON.stringify(executeResult.raw, null, 2)}
+                        {JSON.stringify(currentExecResult.raw, null, 2)}
                       </pre>
                     ) : (
                       <table className="w-full text-xs">
@@ -1615,7 +1721,7 @@ export function VendorExplorer() {
                           </tr>
                         </thead>
                         <tbody>
-                          {executeResult.fields?.map(
+                          {currentExecResult.fields?.map(
                             (f: FlattenedField, i: number) => (
                               <tr
                                 key={i}
@@ -1804,7 +1910,7 @@ export function VendorExplorer() {
                           )}
                         </div>
 
-                        {/* ── Field selection ──────────────────────────────── */}
+                        {/* ── Field selection (grouped by endpoint) ─────── */}
                         <div className="border-t border-white/5 pt-3">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
@@ -1818,87 +1924,115 @@ export function VendorExplorer() {
                             />
                           </div>
 
-                          {!executeResult?.fields?.length ? (
+                          {newTplFieldGroups.length === 0 ? (
                             <p className="text-xs text-secondary/40 py-6 text-center">
-                              Run an endpoint first to load available fields
+                              Execute endpoints or save field mappings to populate available fields
                             </p>
                           ) : (
                             <>
-                              <div className="border border-white/10 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
-                                <table className="w-full text-xs">
-                                  <thead>
-                                    <tr className="text-secondary/60 uppercase border-b border-white/5 sticky top-0 bg-surface">
-                                      <th className="w-8 px-2 py-1.5" />
-                                      <th className="text-left px-2 py-1.5 font-medium">
-                                        Field Path
-                                      </th>
-                                      <th className="text-left px-2 py-1.5 font-medium">
-                                        Display Name
-                                      </th>
-                                      <th className="text-left px-2 py-1.5 font-medium w-32">
-                                        Sample Value
-                                      </th>
-                                      <th className="text-left px-2 py-1.5 font-medium w-16">
-                                        Type
-                                      </th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {newTplFields.map((f) => {
-                                      const selected = newTplSelectedPaths.has(f.path);
-                                      return (
-                                        <tr
-                                          key={f.path}
-                                          onClick={() => toggleFieldSelection(f.path)}
-                                          className={`border-b border-white/5 cursor-pointer transition ${
-                                            selected ? "bg-primary/10" : "hover:bg-white/5"
-                                          }`}
+                              <div className="border border-white/10 rounded-lg overflow-hidden max-h-80 overflow-y-auto">
+                                {newTplFieldGroups.map((group) => {
+                                  const isCollapsed = collapsedEndpointGroups.has(group.endpoint.id);
+                                  const groupSelectedCount = group.fields.filter((f) =>
+                                    newTplSelectedPaths.has(f.path)
+                                  ).length;
+                                  return (
+                                    <div key={group.endpoint.id}>
+                                      {/* ── Group header ── */}
+                                      <div className="flex items-center justify-between px-3 py-2 bg-white/[0.04] border-b border-white/5 sticky top-0 z-10">
+                                        <button
+                                          onClick={() => toggleEndpointGroupCollapse(group.endpoint.id)}
+                                          className="flex items-center gap-2 text-xs font-semibold text-primary hover:text-primary/80 transition"
                                         >
-                                          <td className="px-2 py-1.5 text-center">
-                                            <input
-                                              type="checkbox"
-                                              checked={selected}
-                                              onChange={() => toggleFieldSelection(f.path)}
-                                              className="accent-emerald-500"
-                                              onClick={(e) => e.stopPropagation()}
-                                            />
-                                          </td>
-                                          <td className="px-2 py-1.5 font-mono text-primary break-all">
-                                            {f.path}
-                                          </td>
-                                          <td className="px-2 py-1.5">
-                                            {selected ? (
-                                              <input
-                                                className="bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-xs text-primary w-full focus:outline-none focus:ring-1 focus:ring-primary/50"
-                                                value={newTplDisplayNames[f.path] || ""}
-                                                onChange={(e) =>
-                                                  setNewTplDisplayNames((prev) => ({
-                                                    ...prev,
-                                                    [f.path]: e.target.value,
-                                                  }))
-                                                }
-                                                onClick={(e) => e.stopPropagation()}
-                                              />
-                                            ) : (
-                                              <span className="text-secondary/40">
-                                                {pathToDisplayName(f.path)}
-                                              </span>
-                                            )}
-                                          </td>
-                                          <td
-                                            className="px-2 py-1.5 text-secondary truncate max-w-[120px]"
-                                            title={String(f.value)}
+                                          <span className="text-[10px]">
+                                            {isCollapsed ? "\u25B6" : "\u25BC"}
+                                          </span>
+                                          {group.endpoint.name}
+                                          <span className="text-secondary/50 font-normal font-mono">
+                                            {group.endpoint.method} {group.endpoint.path}
+                                          </span>
+                                        </button>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[10px] text-secondary/40">
+                                            {groupSelectedCount}/{group.fields.length}
+                                          </span>
+                                          <button
+                                            onClick={() => handleSelectAllInGroup(group.endpoint.id)}
+                                            className="text-[10px] text-primary/60 hover:text-primary"
                                           >
-                                            {String(f.value)}
-                                          </td>
-                                          <td className="px-2 py-1.5 text-secondary/60">
-                                            {f.type}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
+                                            All
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeselectAllInGroup(group.endpoint.id)}
+                                            className="text-[10px] text-primary/60 hover:text-primary"
+                                          >
+                                            None
+                                          </button>
+                                        </div>
+                                      </div>
+                                      {/* ── Group fields ── */}
+                                      {!isCollapsed && (
+                                        <table className="w-full text-xs">
+                                          <tbody>
+                                            {group.fields.map((f) => {
+                                              const selected = newTplSelectedPaths.has(f.path);
+                                              return (
+                                                <tr
+                                                  key={f.path}
+                                                  onClick={() => toggleFieldSelection(f.path)}
+                                                  className={`border-b border-white/5 cursor-pointer transition ${
+                                                    selected ? "bg-primary/10" : "hover:bg-white/5"
+                                                  }`}
+                                                >
+                                                  <td className="w-8 px-2 py-1.5 text-center">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={selected}
+                                                      onChange={() => toggleFieldSelection(f.path)}
+                                                      className="accent-emerald-500"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    />
+                                                  </td>
+                                                  <td className="px-2 py-1.5 font-mono text-primary break-all">
+                                                    {f.path}
+                                                  </td>
+                                                  <td className="px-2 py-1.5">
+                                                    {selected ? (
+                                                      <input
+                                                        className="bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-xs text-primary w-full focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                                        value={newTplDisplayNames[f.path] || ""}
+                                                        onChange={(e) =>
+                                                          setNewTplDisplayNames((prev) => ({
+                                                            ...prev,
+                                                            [f.path]: e.target.value,
+                                                          }))
+                                                        }
+                                                        onClick={(e) => e.stopPropagation()}
+                                                      />
+                                                    ) : (
+                                                      <span className="text-secondary/40">
+                                                        {pathToDisplayName(f.path)}
+                                                      </span>
+                                                    )}
+                                                  </td>
+                                                  <td
+                                                    className="px-2 py-1.5 text-secondary truncate max-w-[120px]"
+                                                    title={String(f.value)}
+                                                  >
+                                                    {String(f.value)}
+                                                  </td>
+                                                  <td className="px-2 py-1.5 text-secondary/60 w-16">
+                                                    {f.type}
+                                                  </td>
+                                                </tr>
+                                              );
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
 
                               <div className="flex items-center gap-3 mt-2">

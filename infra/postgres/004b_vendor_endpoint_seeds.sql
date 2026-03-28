@@ -26,7 +26,7 @@ BEGIN
             (cfg_id, 'Site WLANs',       'GET', '/api/v1/sites/{site_id}/wlans', 'WLAN configurations at a site'),
             (cfg_id, 'Client Sessions',  'GET', '/api/v1/sites/{site_id}/stats/clients', 'Connected client session stats'),
             (cfg_id, 'AP Stats with Switch Info', 'GET', '/api/v1/sites/{site_id}/stats/devices?type=ap', 'Live AP operational stats including connected switch LLDP data, client counts, radio stats, uptime, CPU, memory, port stats')
-        ON CONFLICT DO NOTHING;
+        ON CONFLICT (vendor_config_id, name, path) DO NOTHING;
     END IF;
 END $$;
 
@@ -41,7 +41,7 @@ BEGIN
         VALUES
             (cfg_id, 'List Devices',  'GET', '/dvmdb/adom/root/device', 'List managed devices'),
             (cfg_id, 'Device Status', 'GET', '/sys/status', 'System status overview')
-        ON CONFLICT DO NOTHING;
+        ON CONFLICT (vendor_config_id, name, path) DO NOTHING;
     END IF;
 END $$;
 
@@ -56,7 +56,7 @@ BEGIN
         VALUES
             (cfg_id, 'List Devices',  'GET', '/dna/intent/api/v1/network-device', 'List all network devices'),
             (cfg_id, 'Device Health', 'GET', '/dna/intent/api/v1/device-health', 'Device health summary')
-        ON CONFLICT DO NOTHING;
+        ON CONFLICT (vendor_config_id, name, path) DO NOTHING;
     END IF;
 END $$;
 
@@ -71,6 +71,6 @@ BEGIN
         VALUES
             (cfg_id, 'List APs',              'GET', '/v11_1/aps', 'List all access points'),
             (cfg_id, 'AP Operational Status',  'GET', '/v11_1/aps/{apMac}/operational', 'Single AP operational status')
-        ON CONFLICT DO NOTHING;
+        ON CONFLICT (vendor_config_id, name, path) DO NOTHING;
     END IF;
 END $$;
