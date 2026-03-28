@@ -835,6 +835,8 @@ export function VendorExplorer() {
     }
   }
 
+  const selectedConfig = configs.find((c) => c.id === selectedConfigId);
+
   /* templates filtered for current vendor */
   const vendorTemplates = selectedConfig
     ? templates.filter((t) => t.vendor === selectedConfig.vendor)
@@ -988,8 +990,6 @@ export function VendorExplorer() {
       showToast("Failed to delete mapping", "error");
     }
   }
-
-  const selectedConfig = configs.find((c) => c.id === selectedConfigId);
 
   /* ── Render ─────────────────────────────────────────────────────────── */
 
