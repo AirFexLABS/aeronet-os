@@ -3,16 +3,24 @@ import clsx from "clsx";
 import { useTheme } from "../../hooks/useTheme";
 import { useAuth } from "../../context/AuthContext";
 
-const NAV = [
+interface NavItem {
+  to: string;
+  label: string;
+  icon: string;
+  minRole?: "engineer";
+  adminOnly?: boolean;
+}
+
+const NAV: NavItem[] = [
   { to: "/", label: "Dashboard", icon: "\u25a6" },
   { to: "/devices", label: "Devices", icon: "\u25c8" },
   { to: "/topology", label: "Topology", icon: "\u2b21" },
   { to: "/alerts", label: "Alerts", icon: "\u25ce" },
   { to: "/discovery", label: "Discovery", icon: "\u2295" },
-  { to: "/vlans", label: "VLAN Segments", icon: "\u2630", minRole: "engineer" as const },
+  { to: "/vlans", label: "VLAN Segments", icon: "\u2630", minRole: "engineer" },
   { to: "/vault", label: "Vault", icon: "\u{1F510}" },
   { to: "/alerts-setup", label: "Alerts Setup", icon: "\u{1F514}", adminOnly: true },
-] as const;
+];
 
 function roleLabel(role: string): string {
   switch (role) {
@@ -46,8 +54,8 @@ export function Sidebar() {
       </div>
       <nav className="flex-1 py-4 flex flex-col gap-1 px-3">
         {NAV.filter((item) => {
-          if ("adminOnly" in item && item.adminOnly) return user?.role === "admin";
-          if ("minRole" in item && item.minRole === "engineer")
+          if (item.adminOnly) return user?.role === "admin";
+          if (item.minRole === "engineer")
             return user?.role === "admin" || user?.role === "engineer";
           return true;
         }).map(({ to, label, icon }) => (
