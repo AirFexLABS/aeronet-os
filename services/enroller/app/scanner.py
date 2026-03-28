@@ -91,15 +91,23 @@ class NmapScanner:
 
             mac = host.get("addresses", {}).get("mac", "")
             hostname = host.hostname() or ""
-            os_guess = self._extract_os(host)
+            os_guess, confidence = self._extract_os(host)
             serial = self._extract_serial(host, mac)
-            ports = [
-                p
-                for p in host.get("tcp", {})
-                if host["tcp"][p]["state"] == "open"
-            ]
+            osmatch = host.get("osmatch", [])
 
-            vendor = _lookup_vendor(mac, host.get("vendor", {}))
+            tcp_data = host.get("tcp", {})
+            ports = [p for p in tcp_data if tcp_data[p]["state"] == "open"]
+
+            # Service details per open port
+            services = {}
+            for p in ports:
+                svc = tcp_data[p]
+                services[p] = {
+                    "name": svc.get("name", ""),
+                    "version": svc.get("version", ""),
+                }
+
+            vendor = _lookup_vendor(mac, host.get("vendor", {}), osmatch)
             device_type = _classify_device(hostname, ports, vendor, os_guess)
 
             devices.append(
@@ -109,13 +117,15 @@ class NmapScanner:
                     "hostname": hostname,
                     "mac": mac,
                     "os_guess": os_guess,
+                    "confidence": confidence,
                     "open_ports": ports,
+                    "services": services,
                     "vendor": vendor,
                     "device_type": device_type,
                 }
             )
             logger.debug(f"Discovered: {ip} serial={serial} hostname={hostname} "
-                         f"vendor={vendor} type={device_type}")
+                         f"vendor={vendor} type={device_type} confidence={confidence}%")
 
         logger.info(f"Scan complete — {len(devices)} devices found")
         return devices
@@ -142,25 +152,56 @@ class NmapScanner:
 
         return f"UNKNOWN-{host.hostname() or 'device'}"
 
-    def _extract_os(self, host) -> str:
+    def _extract_os(self, host) -> tuple[str, int]:
+        """Return (os_name, accuracy_percent) from nmap osmatch."""
         osmatch = host.get("osmatch", [])
         if osmatch:
-            return osmatch[0].get("name", "unknown")
-        return "unknown"
+            name = osmatch[0].get("name", "unknown")
+            accuracy = int(osmatch[0].get("accuracy", 0))
+            return name, accuracy
+        return "unknown", 0
 
 
-def _lookup_vendor(mac: str, nmap_vendor: dict | None = None) -> str:
-    """Resolve vendor from nmap's vendor dict first, then static OUI_MAP fallback."""
+def _extract_vendor_from_cpe(osmatch_list: list) -> str:
+    """Extract vendor name from CPE strings in osmatch/osclass data.
+
+    CPE format: cpe:/o:vendor:product  (e.g. cpe:/o:cisco:ios → "Cisco")
+    """
+    for match in osmatch_list:
+        for osclass in match.get("osclass", []):
+            for cpe in osclass.get("cpe", []):
+                # cpe:/o:cisco:ios  or  cpe:/h:cisco:catalyst_3750
+                parts = cpe.split(":")
+                if len(parts) >= 4:
+                    return parts[3].replace("_", " ").title()
+    return ""
+
+
+def _lookup_vendor(
+    mac: str,
+    nmap_vendor: dict | None = None,
+    osmatch: list | None = None,
+) -> str:
+    """Resolve vendor: nmap vendor dict → static OUI_MAP → CPE strings."""
     if nmap_vendor:
         # nmap returns {mac_addr: vendor_name} from its full OUI database
         for vendor_name in nmap_vendor.values():
             if vendor_name:
                 return vendor_name
 
-    if not mac:
-        return "unknown"
-    prefix = mac.lower()[:8]  # first 3 octets e.g. "00:0b:86"
-    return OUI_MAP.get(prefix, "unknown")
+    if mac:
+        prefix = mac.lower()[:8]  # first 3 octets e.g. "00:0b:86"
+        oui_hit = OUI_MAP.get(prefix)
+        if oui_hit:
+            return oui_hit
+
+    # Fallback: extract vendor from CPE strings in OS fingerprint
+    if osmatch:
+        cpe_vendor = _extract_vendor_from_cpe(osmatch)
+        if cpe_vendor:
+            return cpe_vendor
+
+    return "unknown"
 
 
 def _classify_device(
@@ -339,6 +380,7 @@ async def fingerprint_device(ip: str) -> dict:
             "vendor": "unknown",
             "device_class": "unknown",
             "open_ports": [],
+            "services": {},
             "os_guess": "unknown",
             "confidence": 0,
             "snmp_desc": None,
@@ -347,19 +389,25 @@ async def fingerprint_device(ip: str) -> dict:
     host = scanner.nm[ip]
     mac = host.get("addresses", {}).get("mac", "")
     hostname = host.hostname() or ""
-    os_guess = scanner._extract_os(host)
+    os_guess, os_accuracy = scanner._extract_os(host)
+    osmatch = host.get("osmatch", [])
 
-    tcp_ports = [
-        p for p in host.get("tcp", {})
-        if host["tcp"][p]["state"] == "open"
-    ]
-    udp_ports = [
-        p for p in host.get("udp", {})
-        if host["udp"][p]["state"] == "open"
-    ]
+    tcp_data = host.get("tcp", {})
+    tcp_ports = [p for p in tcp_data if tcp_data[p]["state"] == "open"]
+    udp_data = host.get("udp", {})
+    udp_ports = [p for p in udp_data if udp_data[p]["state"] == "open"]
     open_ports = sorted(set(tcp_ports + udp_ports))
 
-    vendor = _lookup_vendor(mac, host.get("vendor", {}))
+    # Service details per open port
+    services = {}
+    for p in tcp_ports:
+        svc = tcp_data[p]
+        services[p] = {"name": svc.get("name", ""), "version": svc.get("version", "")}
+    for p in udp_ports:
+        svc = udp_data[p]
+        services[p] = {"name": svc.get("name", ""), "version": svc.get("version", "")}
+
+    vendor = _lookup_vendor(mac, host.get("vendor", {}), osmatch)
     device_class = _classify_device(hostname, open_ports, vendor, os_guess)
 
     # SNMP description from host scripts
@@ -375,21 +423,21 @@ async def fingerprint_device(ip: str) -> dict:
         if vault_desc:
             snmp_desc = vault_desc
 
-    # Confidence score: more data = higher confidence
+    # Confidence score: combine heuristic bonuses with nmap OS accuracy
     confidence = 20  # base: host is up
     if mac:
-        confidence += 15
+        confidence += 10
     if hostname:
-        confidence += 15
+        confidence += 10
     if os_guess and os_guess != "unknown":
-        confidence += 20
+        confidence += os_accuracy * 0.3  # nmap accuracy (0-100) scaled to 0-30
     if open_ports:
-        confidence += 15
+        confidence += 10
     if vendor and vendor != "unknown":
         confidence += 10
     if snmp_desc:
         confidence += 5
-    confidence = min(confidence, 100)
+    confidence = min(int(confidence), 100)
 
     return {
         "ip": ip,
@@ -398,6 +446,7 @@ async def fingerprint_device(ip: str) -> dict:
         "vendor": vendor,
         "device_class": device_class,
         "open_ports": open_ports,
+        "services": services,
         "os_guess": os_guess,
         "confidence": confidence,
         "snmp_desc": snmp_desc,
