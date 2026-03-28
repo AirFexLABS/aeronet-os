@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import {
   api,
   VendorConfig,
@@ -31,6 +31,21 @@ function extractUserParams(path: string): string[] {
 function airportCode(name: string): string {
   const first = name.split(" ")[0];
   return first && first.length >= 3 ? first.substring(0, 3).toUpperCase() : "---";
+}
+
+/** "$.lldp_stat.system_name" → "Lldp Stat System Name" */
+function pathToDisplayName(path: string): string {
+  const last = path.split(".").pop() || path;
+  return (
+    last
+      .replace(/^\$/, "")
+      .replace(/\[\d+\]$/, "")
+      .replace(/[._]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ") || path
+  );
 }
 
 /* ── Toast ─────────────────────────────────────────────────────────────── */
@@ -601,18 +616,27 @@ export function VendorExplorer() {
     useState<VendorEndpoint | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
 
+  /* top-level tab */
+  const [topTab, setTopTab] = useState<"explorer" | "templates">("explorer");
+
   /* templates */
   const [templates, setTemplates] = useState<FieldMappingTemplate[]>([]);
-  const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   const [expandedTemplateId, setExpandedTemplateId] = useState<number | null>(null);
   const [expandedTemplateDetail, setExpandedTemplateDetail] = useState<FieldMappingTemplateDetail | null>(null);
   const [renamingTemplateId, setRenamingTemplateId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
-  const [saveTemplateName, setSaveTemplateName] = useState("");
-  const [saveTemplateDesc, setSaveTemplateDesc] = useState("");
-  const [saveTemplateScope, setSaveTemplateScope] = useState("vendor");
-  const [savingTemplate, setSavingTemplate] = useState(false);
+
+  /* new template form */
+  const [showNewTemplateForm, setShowNewTemplateForm] = useState(false);
+  const [newTplName, setNewTplName] = useState("");
+  const [newTplDesc, setNewTplDesc] = useState("");
+  const [newTplVendor, setNewTplVendor] = useState("");
+  const [newTplScope, setNewTplScope] = useState("vendor");
+  const [newTplSiteGroup, setNewTplSiteGroup] = useState("");
+  const [newTplSelectedPaths, setNewTplSelectedPaths] = useState<Set<string>>(new Set());
+  const [newTplDisplayNames, setNewTplDisplayNames] = useState<Record<string, string>>({});
+  const [newTplFieldSearch, setNewTplFieldSearch] = useState("");
+  const [newTplSaving, setNewTplSaving] = useState(false);
 
   /* toast */
   const [toast, setToast] = useState<{
@@ -699,7 +723,6 @@ export function VendorExplorer() {
 
     if (sites.length > 0) {
       setSitesCache((prev) => ({ ...prev, [configId]: sites }));
-      setShowSitesTable(true);
       showToast(`${sites.length} sites cached`);
     }
   }
@@ -796,28 +819,98 @@ export function VendorExplorer() {
     }
   }
 
-  async function handleSaveAsTemplate() {
-    if (!selectedEndpointId || !saveTemplateName.trim()) return;
-    setSavingTemplate(true);
-    try {
-      const tpl = await api.vendorExplorer.templates.saveAs(selectedEndpointId, {
-        name: saveTemplateName.trim(),
-        description: saveTemplateDesc.trim() || undefined,
-        scope: saveTemplateScope,
+  /* ── New template form ─────────────────────────────────────────────── */
+
+  function openNewTemplateForm() {
+    setShowNewTemplateForm(true);
+    setNewTplVendor(selectedConfig?.vendor ?? uniqueVendors[0] ?? "");
+    setNewTplSelectedPaths(new Set());
+    setNewTplDisplayNames({});
+    setNewTplFieldSearch("");
+    setNewTplName("");
+    setNewTplDesc("");
+    setNewTplScope("vendor");
+    setNewTplSiteGroup("");
+  }
+
+  function toggleFieldSelection(path: string) {
+    const isSelected = newTplSelectedPaths.has(path);
+    if (isSelected) {
+      setNewTplSelectedPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
       });
+    } else {
+      setNewTplSelectedPaths((prev) => new Set(prev).add(path));
+      if (!newTplDisplayNames[path]) {
+        setNewTplDisplayNames((prev) => ({
+          ...prev,
+          [path]: pathToDisplayName(path),
+        }));
+      }
+    }
+  }
+
+  function handleSelectAllVisible() {
+    setNewTplSelectedPaths((prev) => {
+      const next = new Set(prev);
+      for (const f of newTplFields) next.add(f.path);
+      return next;
+    });
+    setNewTplDisplayNames((prev) => {
+      const next = { ...prev };
+      for (const f of newTplFields) {
+        if (!next[f.path]) next[f.path] = pathToDisplayName(f.path);
+      }
+      return next;
+    });
+  }
+
+  function handleDeselectAllVisible() {
+    setNewTplSelectedPaths((prev) => {
+      const next = new Set(prev);
+      for (const f of newTplFields) next.delete(f.path);
+      return next;
+    });
+  }
+
+  async function handleCreateTemplate() {
+    if (!newTplName.trim() || !newTplVendor || newTplSelectedPaths.size === 0)
+      return;
+    setNewTplSaving(true);
+    try {
+      const tpl = await api.vendorExplorer.templates.create({
+        name: newTplName.trim(),
+        description: newTplDesc.trim() || undefined,
+        vendor: newTplVendor,
+        scope: newTplScope,
+        site_group_id:
+          newTplScope === "site_group" ? newTplSiteGroup || undefined : undefined,
+      });
+
+      const allFields = executeResult?.fields ?? [];
+      for (const f of allFields) {
+        if (!newTplSelectedPaths.has(f.path)) continue;
+        await api.vendorExplorer.templates.addField(tpl.id, {
+          json_path: f.path,
+          display_name:
+            newTplDisplayNames[f.path] || pathToDisplayName(f.path),
+          data_type: f.type || "string",
+        });
+      }
+
+      tpl.field_count = newTplSelectedPaths.size;
       setTemplates((prev) => [...prev, tpl]);
-      setShowSaveAsTemplate(false);
-      setSaveTemplateName("");
-      setSaveTemplateDesc("");
-      setSaveTemplateScope("vendor");
-      showToast(`Template "${tpl.name}" created with ${tpl.field_count} fields`);
+      setShowNewTemplateForm(false);
+      showToast(`Template saved with ${newTplSelectedPaths.size} fields`);
     } catch (e: unknown) {
       showToast(
-        e instanceof Error ? e.message : "Failed to save as template",
+        e instanceof Error ? e.message : "Failed to create template",
         "error"
       );
     } finally {
-      setSavingTemplate(false);
+      setNewTplSaving(false);
     }
   }
 
@@ -841,6 +934,22 @@ export function VendorExplorer() {
   const vendorTemplates = selectedConfig
     ? templates.filter((t) => t.vendor === selectedConfig.vendor)
     : [];
+
+  const uniqueVendors = useMemo(() => {
+    const set = new Set(configs.map((c) => c.vendor));
+    return Array.from(set);
+  }, [configs]);
+
+  const newTplFields = useMemo(() => {
+    if (!executeResult?.fields) return [];
+    const search = newTplFieldSearch.toLowerCase();
+    if (!search) return executeResult.fields;
+    return executeResult.fields.filter(
+      (f) =>
+        f.path.toLowerCase().includes(search) ||
+        String(f.value).toLowerCase().includes(search)
+    );
+  }, [executeResult?.fields, newTplFieldSearch]);
 
   /* ── Execute logic ──────────────────────────────────────────────────── */
 
@@ -1092,6 +1201,32 @@ export function VendorExplorer() {
             </div>
           ) : (
             <>
+              {/* ── Tab Bar ────────────────────────────────────────────── */}
+              <div className="flex border-b border-white/10 shrink-0">
+                <button
+                  onClick={() => setTopTab("explorer")}
+                  className={`px-4 py-2.5 text-xs font-medium transition border-b-2 ${
+                    topTab === "explorer"
+                      ? "text-primary border-primary"
+                      : "text-secondary hover:text-primary border-transparent"
+                  }`}
+                >
+                  Explorer
+                </button>
+                <button
+                  onClick={() => setTopTab("templates")}
+                  className={`px-4 py-2.5 text-xs font-medium transition border-b-2 ${
+                    topTab === "templates"
+                      ? "text-primary border-primary"
+                      : "text-secondary hover:text-primary border-transparent"
+                  }`}
+                >
+                  Templates{templates.length > 0 ? ` (${templates.length})` : ""}
+                </button>
+              </div>
+
+              {topTab === "explorer" && (
+              <>
               {/* ── Panel 2: Endpoints ──────────────────────────────────── */}
               <div className="border-b border-white/10 max-h-[40%] flex flex-col shrink-0">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
@@ -1310,69 +1445,81 @@ export function VendorExplorer() {
                 </div>
               )}
 
-              {/* ── Sites Table (collapsible) ──────────────────────────── */}
-              {showSitesTable && currentSites.length > 0 && (
-                <div className="border-b border-white/10 max-h-48 flex flex-col shrink-0">
-                  <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-white/[0.02] shrink-0">
-                    <span className="text-xs text-secondary">
-                      {currentSites.length} sites loaded
-                    </span>
+              {/* ── Sites (collapsed pill / expandable table) ────────── */}
+              {currentSites.length > 0 && (
+                <div className="border-b border-white/10 shrink-0">
+                  {!showSitesTable ? (
                     <button
-                      onClick={() => setShowSitesTable(false)}
-                      className="text-xs text-secondary hover:text-primary transition"
+                      onClick={() => setShowSitesTable(true)}
+                      className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-secondary/50 hover:text-primary hover:bg-white/[0.02] transition"
                     >
-                      Hide
+                      <span>{currentSites.length} sites loaded</span>
+                      <span>&#9654; Expand</span>
                     </button>
-                  </div>
-                  <div className="overflow-y-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-secondary/60 uppercase border-b border-white/5 sticky top-0 bg-surface">
-                          <th className="text-left px-4 py-1.5 font-medium">
-                            Site Name
-                          </th>
-                          <th className="text-left px-2 py-1.5 font-medium w-16">
-                            Airport
-                          </th>
-                          <th className="text-left px-2 py-1.5 font-medium">
-                            Address
-                          </th>
-                          <th className="text-left px-2 py-1.5 font-medium w-28">
-                            ID
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {currentSites.map((s) => (
-                          <tr
-                            key={s.id}
-                            onClick={() => {
-                              setActiveSiteId(s.id);
-                              setActiveSiteName(s.name);
-                            }}
-                            className={`border-b border-white/5 cursor-pointer transition ${
-                              activeSiteId === s.id
-                                ? "bg-primary/10"
-                                : "hover:bg-white/5"
-                            }`}
-                          >
-                            <td className="px-4 py-1.5 text-primary">
-                              {s.name}
-                            </td>
-                            <td className="px-2 py-1.5 text-secondary font-mono">
-                              {airportCode(s.name)}
-                            </td>
-                            <td className="px-2 py-1.5 text-secondary/60 truncate max-w-[250px]">
-                              {s.address || "\u2014"}
-                            </td>
-                            <td className="px-2 py-1.5 text-secondary/40 font-mono">
-                              {s.id.substring(0, 8)}&hellip;
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  ) : (
+                    <div className="max-h-48 flex flex-col">
+                      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-white/[0.02] shrink-0">
+                        <span className="text-xs text-secondary">
+                          {currentSites.length} sites loaded
+                        </span>
+                        <button
+                          onClick={() => setShowSitesTable(false)}
+                          className="text-xs text-secondary hover:text-primary transition"
+                        >
+                          Hide
+                        </button>
+                      </div>
+                      <div className="overflow-y-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-secondary/60 uppercase border-b border-white/5 sticky top-0 bg-surface">
+                              <th className="text-left px-4 py-1.5 font-medium">
+                                Site Name
+                              </th>
+                              <th className="text-left px-2 py-1.5 font-medium w-16">
+                                Airport
+                              </th>
+                              <th className="text-left px-2 py-1.5 font-medium">
+                                Address
+                              </th>
+                              <th className="text-left px-2 py-1.5 font-medium w-28">
+                                ID
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {currentSites.map((s) => (
+                              <tr
+                                key={s.id}
+                                onClick={() => {
+                                  setActiveSiteId(s.id);
+                                  setActiveSiteName(s.name);
+                                }}
+                                className={`border-b border-white/5 cursor-pointer transition ${
+                                  activeSiteId === s.id
+                                    ? "bg-primary/10"
+                                    : "hover:bg-white/5"
+                                }`}
+                              >
+                                <td className="px-4 py-1.5 text-primary">
+                                  {s.name}
+                                </td>
+                                <td className="px-2 py-1.5 text-secondary font-mono">
+                                  {airportCode(s.name)}
+                                </td>
+                                <td className="px-2 py-1.5 text-secondary/60 truncate max-w-[250px]">
+                                  {s.address || "\u2014"}
+                                </td>
+                                <td className="px-2 py-1.5 text-secondary/40 font-mono">
+                                  {s.id.substring(0, 8)}&hellip;
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1508,53 +1655,11 @@ export function VendorExplorer() {
 
                 {/* ── Panel 4: Saved Field Mappings ─────────────────────── */}
                 <div className="w-80 flex flex-col overflow-hidden shrink-0">
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+                  <div className="px-4 py-3 border-b border-white/10 shrink-0">
                     <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
                       Saved Mappings
                     </span>
-                    {selectedEndpointId && fieldMappings.length > 0 && (
-                      <button
-                        onClick={() => setShowSaveAsTemplate((p) => !p)}
-                        className="text-xs text-primary hover:text-primary/80 font-medium transition"
-                      >
-                        {showSaveAsTemplate ? "Cancel" : "Save as Template"}
-                      </button>
-                    )}
                   </div>
-
-                  {/* Save as Template inline form */}
-                  {showSaveAsTemplate && selectedEndpointId && (
-                    <div className="px-3 py-3 border-b border-white/10 space-y-2 bg-white/[0.02] shrink-0">
-                      <input
-                        className={inputCls}
-                        value={saveTemplateName}
-                        onChange={(e) => setSaveTemplateName(e.target.value)}
-                        placeholder="Template name"
-                      />
-                      <input
-                        className={inputCls}
-                        value={saveTemplateDesc}
-                        onChange={(e) => setSaveTemplateDesc(e.target.value)}
-                        placeholder="Description (optional)"
-                      />
-                      <select
-                        className={inputCls}
-                        value={saveTemplateScope}
-                        onChange={(e) => setSaveTemplateScope(e.target.value)}
-                      >
-                        <option value="vendor">This Vendor</option>
-                        <option value="site_group">Site Group</option>
-                      </select>
-                      <button
-                        onClick={handleSaveAsTemplate}
-                        disabled={savingTemplate || !saveTemplateName.trim()}
-                        className="w-full px-3 py-1.5 bg-primary text-black text-xs font-medium rounded-lg hover:bg-primary/80 disabled:opacity-50 transition"
-                      >
-                        {savingTemplate ? "Saving..." : `Save ${fieldMappings.length} mappings as template`}
-                      </button>
-                    </div>
-                  )}
-
                   <div className="flex-1 overflow-auto p-3">
                     {!selectedEndpointId ? (
                       <p className="text-xs text-secondary/40 text-center py-8">
@@ -1604,156 +1709,393 @@ export function VendorExplorer() {
                 </div>
               </div>
             </>
-          )}
-        </div>
-      </div>
+            )}
 
-      {/* ── Template Manager Panel (collapsible) ─────────────────────── */}
-      {templates.length > 0 && (
-        <div className="border-t border-white/10">
-          <button
-            onClick={() => setShowTemplatePanel((p) => !p)}
-            className="w-full flex items-center justify-between px-6 py-2.5 hover:bg-white/[0.02] transition"
-          >
-            <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
-              Field Mapping Templates ({templates.length})
-            </span>
-            <span className="text-xs text-secondary/50">
-              {showTemplatePanel ? "\u25B2" : "\u25BC"}
-            </span>
-          </button>
+              {/* ── Templates Tab ──────────────────────────────────────── */}
+              {topTab === "templates" && (
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+                    <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
+                      Field Mapping Templates ({templates.length})
+                    </span>
+                    <button
+                      onClick={() =>
+                        showNewTemplateForm
+                          ? setShowNewTemplateForm(false)
+                          : openNewTemplateForm()
+                      }
+                      className="text-xs text-primary hover:text-primary/80 font-medium transition"
+                    >
+                      {showNewTemplateForm ? "Cancel" : "+ New Template"}
+                    </button>
+                  </div>
 
-          {showTemplatePanel && (
-            <div className="max-h-72 overflow-auto border-t border-white/5">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-secondary/60 uppercase border-b border-white/5 sticky top-0 bg-surface">
-                    <th className="text-left px-4 py-2 font-medium">Name</th>
-                    <th className="text-left px-2 py-2 font-medium w-28">Vendor</th>
-                    <th className="text-left px-2 py-2 font-medium w-20">Scope</th>
-                    <th className="text-left px-2 py-2 font-medium w-16">Fields</th>
-                    <th className="text-right px-4 py-2 font-medium w-52">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {templates.map((tpl) => (
-                    <Fragment key={tpl.id}>
-                      <tr
-                        className="border-b border-white/5 hover:bg-white/5"
-                      >
-                        <td className="px-4 py-2 text-primary">
-                          {renamingTemplateId === tpl.id ? (
-                            <form
-                              onSubmit={(e) => {
-                                e.preventDefault();
-                                handleRenameTemplate(tpl.id);
-                              }}
-                              className="flex items-center gap-1"
-                            >
-                              <input
-                                className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-primary focus:outline-none focus:ring-1 focus:ring-primary/50 w-48"
-                                value={renameValue}
-                                onChange={(e) => setRenameValue(e.target.value)}
-                                autoFocus
-                                onBlur={() => setRenamingTemplateId(null)}
-                              />
-                            </form>
-                          ) : (
-                            <span>{tpl.name}</span>
-                          )}
-                          {tpl.description && (
-                            <p className="text-secondary/40 mt-0.5 truncate max-w-xs">
-                              {tpl.description}
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-2 py-2 text-secondary">
-                          {tpl.vendor}
-                        </td>
-                        <td className="px-2 py-2 text-secondary/60">
-                          {tpl.scope}
-                        </td>
-                        <td className="px-2 py-2 text-secondary">
-                          {tpl.field_count}
-                        </td>
-                        <td className="px-4 py-2 text-right space-x-2">
-                          <button
-                            onClick={() => handleExpandTemplate(tpl.id)}
-                            className="text-primary/60 hover:text-primary"
-                          >
-                            {expandedTemplateId === tpl.id ? "Hide" : "Fields"}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setRenamingTemplateId(tpl.id);
-                              setRenameValue(tpl.name);
-                            }}
-                            className="text-primary/60 hover:text-primary"
-                          >
-                            Rename
-                          </button>
-                          <button
-                            onClick={() => handleDuplicateTemplate(tpl)}
-                            className="text-primary/60 hover:text-primary"
-                          >
-                            Duplicate
-                          </button>
-                          {selectedConfigId && endpoints.length > 0 && (
+                  {/* ── New Template Form (collapsible) ──────────────────── */}
+                  {showNewTemplateForm && (
+                    <div className="border-b border-white/10 shrink-0 max-h-[60%] flex flex-col bg-white/[0.02]">
+                      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 shrink-0">
+                        <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
+                          New Template
+                        </span>
+                        <button
+                          onClick={() => setShowNewTemplateForm(false)}
+                          className="text-xs text-secondary hover:text-primary transition"
+                        >
+                          &#9650; Collapse
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-auto p-4 space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className={labelCls}>Template Name</label>
+                            <input
+                              className={inputCls}
+                              value={newTplName}
+                              onChange={(e) => setNewTplName(e.target.value)}
+                              placeholder="e.g. AP Stats CMDB Template"
+                            />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Description (optional)</label>
+                            <input
+                              className={inputCls}
+                              value={newTplDesc}
+                              onChange={(e) => setNewTplDesc(e.target.value)}
+                              placeholder="What this template maps"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <label className={labelCls}>Vendor</label>
                             <select
-                              className="bg-white/5 border border-white/10 rounded px-1 py-0.5 text-xs text-secondary focus:outline-none"
-                              value=""
-                              onChange={(e) => {
-                                if (e.target.value) {
-                                  handleAssignTemplateToEndpoint(tpl.id, Number(e.target.value));
-                                }
-                              }}
+                              className={inputCls}
+                              value={newTplVendor}
+                              onChange={(e) => setNewTplVendor(e.target.value)}
                             >
-                              <option value="">Assign...</option>
-                              {endpoints.map((ep) => (
-                                <option key={ep.id} value={ep.id}>
-                                  {ep.name}
+                              {uniqueVendors.map((v) => (
+                                <option key={v} value={v}>
+                                  {PRESETS[v]?.display_name ?? v}
                                 </option>
                               ))}
                             </select>
-                          )}
-                          <button
-                            onClick={() => handleDeleteTemplate(tpl.id)}
-                            className="text-red-400/60 hover:text-red-400"
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                      {expandedTemplateId === tpl.id && expandedTemplateDetail && (
-                        <tr className="bg-white/[0.02]">
-                          <td colSpan={5} className="px-6 py-3">
-                            <div className="grid grid-cols-[1fr_1fr_auto_auto_auto] gap-x-4 gap-y-1 text-xs">
-                              <span className="text-secondary/60 uppercase font-medium">JSON Path</span>
-                              <span className="text-secondary/60 uppercase font-medium">Display Name</span>
-                              <span className="text-secondary/60 uppercase font-medium">CMDB</span>
-                              <span className="text-secondary/60 uppercase font-medium">Grafana</span>
-                              <span className="text-secondary/60 uppercase font-medium">Type</span>
-                              {expandedTemplateDetail.fields.map((f) => (
-                                <Fragment key={f.id}>
-                                  <span className="text-primary font-mono break-all">{f.json_path}</span>
-                                  <span className="text-secondary">{f.display_name}</span>
-                                  <span className="text-secondary/50">{f.cmdb_column || "\u2014"}</span>
-                                  <span className="text-secondary/50">{f.grafana_label || "\u2014"}</span>
-                                  <span className="text-secondary/50">{f.data_type}</span>
-                                </Fragment>
-                              ))}
+                          </div>
+                          <div>
+                            <label className={labelCls}>Scope</label>
+                            <select
+                              className={inputCls}
+                              value={newTplScope}
+                              onChange={(e) => setNewTplScope(e.target.value)}
+                            >
+                              <option value="vendor">This Vendor</option>
+                              <option value="site_group">Site Group</option>
+                            </select>
+                          </div>
+                          {newTplScope === "site_group" && (
+                            <div>
+                              <label className={labelCls}>Site Group</label>
+                              <input
+                                className={inputCls}
+                                value={newTplSiteGroup}
+                                onChange={(e) => setNewTplSiteGroup(e.target.value)}
+                                placeholder="Site group ID"
+                              />
                             </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                          )}
+                        </div>
+
+                        {/* ── Field selection ──────────────────────────────── */}
+                        <div className="border-t border-white/5 pt-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-secondary uppercase tracking-wider">
+                              Select Fields
+                            </span>
+                            <input
+                              className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-primary placeholder:text-secondary/40 focus:outline-none focus:ring-1 focus:ring-primary/50 w-48"
+                              value={newTplFieldSearch}
+                              onChange={(e) => setNewTplFieldSearch(e.target.value)}
+                              placeholder="Search fields..."
+                            />
+                          </div>
+
+                          {!executeResult?.fields?.length ? (
+                            <p className="text-xs text-secondary/40 py-6 text-center">
+                              Run an endpoint first to load available fields
+                            </p>
+                          ) : (
+                            <>
+                              <div className="border border-white/10 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-secondary/60 uppercase border-b border-white/5 sticky top-0 bg-surface">
+                                      <th className="w-8 px-2 py-1.5" />
+                                      <th className="text-left px-2 py-1.5 font-medium">
+                                        Field Path
+                                      </th>
+                                      <th className="text-left px-2 py-1.5 font-medium">
+                                        Display Name
+                                      </th>
+                                      <th className="text-left px-2 py-1.5 font-medium w-32">
+                                        Sample Value
+                                      </th>
+                                      <th className="text-left px-2 py-1.5 font-medium w-16">
+                                        Type
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {newTplFields.map((f) => {
+                                      const selected = newTplSelectedPaths.has(f.path);
+                                      return (
+                                        <tr
+                                          key={f.path}
+                                          onClick={() => toggleFieldSelection(f.path)}
+                                          className={`border-b border-white/5 cursor-pointer transition ${
+                                            selected ? "bg-primary/10" : "hover:bg-white/5"
+                                          }`}
+                                        >
+                                          <td className="px-2 py-1.5 text-center">
+                                            <input
+                                              type="checkbox"
+                                              checked={selected}
+                                              onChange={() => toggleFieldSelection(f.path)}
+                                              className="accent-emerald-500"
+                                              onClick={(e) => e.stopPropagation()}
+                                            />
+                                          </td>
+                                          <td className="px-2 py-1.5 font-mono text-primary break-all">
+                                            {f.path}
+                                          </td>
+                                          <td className="px-2 py-1.5">
+                                            {selected ? (
+                                              <input
+                                                className="bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-xs text-primary w-full focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                                value={newTplDisplayNames[f.path] || ""}
+                                                onChange={(e) =>
+                                                  setNewTplDisplayNames((prev) => ({
+                                                    ...prev,
+                                                    [f.path]: e.target.value,
+                                                  }))
+                                                }
+                                                onClick={(e) => e.stopPropagation()}
+                                              />
+                                            ) : (
+                                              <span className="text-secondary/40">
+                                                {pathToDisplayName(f.path)}
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td
+                                            className="px-2 py-1.5 text-secondary truncate max-w-[120px]"
+                                            title={String(f.value)}
+                                          >
+                                            {String(f.value)}
+                                          </td>
+                                          <td className="px-2 py-1.5 text-secondary/60">
+                                            {f.type}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+
+                              <div className="flex items-center gap-3 mt-2">
+                                <button
+                                  onClick={handleSelectAllVisible}
+                                  className="text-xs text-primary/70 hover:text-primary"
+                                >
+                                  Select All
+                                </button>
+                                <button
+                                  onClick={handleDeselectAllVisible}
+                                  className="text-xs text-primary/70 hover:text-primary"
+                                >
+                                  Deselect All
+                                </button>
+                                <span className="text-xs text-secondary/50 ml-auto">
+                                  {newTplSelectedPaths.size} fields selected
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        <div className="flex justify-end gap-3 pt-2 border-t border-white/5">
+                          <button
+                            onClick={() => setShowNewTemplateForm(false)}
+                            className={btnCancel}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleCreateTemplate}
+                            disabled={
+                              newTplSaving ||
+                              !newTplName.trim() ||
+                              !newTplVendor ||
+                              newTplSelectedPaths.size === 0
+                            }
+                            className={btnPrimary}
+                          >
+                            {newTplSaving ? "Saving..." : "Save Template \u2192"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Templates table ───────────────────────────────────── */}
+                  <div className="flex-1 overflow-auto">
+                    {templates.length === 0 ? (
+                      <p className="text-xs text-secondary/40 text-center py-12">
+                        No templates yet. Create one from the last Execute response.
+                      </p>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-secondary/60 uppercase border-b border-white/5 sticky top-0 bg-surface">
+                            <th className="text-left px-4 py-2 font-medium">Name</th>
+                            <th className="text-left px-2 py-2 font-medium w-28">Vendor</th>
+                            <th className="text-left px-2 py-2 font-medium w-20">Scope</th>
+                            <th className="text-left px-2 py-2 font-medium w-16">Fields</th>
+                            <th className="text-right px-4 py-2 font-medium w-52">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {templates.map((tpl) => (
+                            <Fragment key={tpl.id}>
+                              <tr className="border-b border-white/5 hover:bg-white/5">
+                                <td className="px-4 py-2 text-primary">
+                                  {renamingTemplateId === tpl.id ? (
+                                    <form
+                                      onSubmit={(e) => {
+                                        e.preventDefault();
+                                        handleRenameTemplate(tpl.id);
+                                      }}
+                                      className="flex items-center gap-1"
+                                    >
+                                      <input
+                                        className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-primary focus:outline-none focus:ring-1 focus:ring-primary/50 w-48"
+                                        value={renameValue}
+                                        onChange={(e) => setRenameValue(e.target.value)}
+                                        autoFocus
+                                        onBlur={() => setRenamingTemplateId(null)}
+                                      />
+                                    </form>
+                                  ) : (
+                                    <span>{tpl.name}</span>
+                                  )}
+                                  {tpl.description && (
+                                    <p className="text-secondary/40 mt-0.5 truncate max-w-xs">
+                                      {tpl.description}
+                                    </p>
+                                  )}
+                                </td>
+                                <td className="px-2 py-2 text-secondary">{tpl.vendor}</td>
+                                <td className="px-2 py-2 text-secondary/60">{tpl.scope}</td>
+                                <td className="px-2 py-2 text-secondary">{tpl.field_count}</td>
+                                <td className="px-4 py-2 text-right space-x-2">
+                                  <button
+                                    onClick={() => handleExpandTemplate(tpl.id)}
+                                    className="text-primary/60 hover:text-primary"
+                                  >
+                                    {expandedTemplateId === tpl.id ? "Hide" : "Fields"}
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setRenamingTemplateId(tpl.id);
+                                      setRenameValue(tpl.name);
+                                    }}
+                                    className="text-primary/60 hover:text-primary"
+                                  >
+                                    Rename
+                                  </button>
+                                  <button
+                                    onClick={() => handleDuplicateTemplate(tpl)}
+                                    className="text-primary/60 hover:text-primary"
+                                  >
+                                    Duplicate
+                                  </button>
+                                  {selectedConfigId && endpoints.length > 0 && (
+                                    <select
+                                      className="bg-white/5 border border-white/10 rounded px-1 py-0.5 text-xs text-secondary focus:outline-none"
+                                      value=""
+                                      onChange={(e) => {
+                                        if (e.target.value)
+                                          handleAssignTemplateToEndpoint(
+                                            tpl.id,
+                                            Number(e.target.value)
+                                          );
+                                      }}
+                                    >
+                                      <option value="">Assign...</option>
+                                      {endpoints.map((ep) => (
+                                        <option key={ep.id} value={ep.id}>
+                                          {ep.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                  <button
+                                    onClick={() => handleDeleteTemplate(tpl.id)}
+                                    className="text-red-400/60 hover:text-red-400"
+                                  >
+                                    Delete
+                                  </button>
+                                </td>
+                              </tr>
+                              {expandedTemplateId === tpl.id && expandedTemplateDetail && (
+                                <tr className="bg-white/[0.02]">
+                                  <td colSpan={5} className="px-6 py-3">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="text-secondary/60 uppercase">
+                                          <th className="text-left py-1 pr-3 font-medium">JSON Path</th>
+                                          <th className="text-left py-1 pr-3 font-medium">Display Name</th>
+                                          <th className="text-left py-1 pr-3 font-medium">CMDB</th>
+                                          <th className="text-left py-1 pr-3 font-medium">Grafana</th>
+                                          <th className="text-left py-1 pr-3 font-medium">Type</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {expandedTemplateDetail.fields.map((f) => (
+                                          <tr key={f.id} className="border-t border-white/5">
+                                            <td className="py-1 pr-3 text-primary font-mono break-all">
+                                              {f.json_path}
+                                            </td>
+                                            <td className="py-1 pr-3 text-secondary">
+                                              {f.display_name}
+                                            </td>
+                                            <td className="py-1 pr-3 text-secondary/50">
+                                              {f.cmdb_column || "\u2014"}
+                                            </td>
+                                            <td className="py-1 pr-3 text-secondary/50">
+                                              {f.grafana_label || "\u2014"}
+                                            </td>
+                                            <td className="py-1 pr-3 text-secondary/50">
+                                              {f.data_type}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
-      )}
+      </div>
 
       {/* ── Modals ─────────────────────────────────────────────────────── */}
 
