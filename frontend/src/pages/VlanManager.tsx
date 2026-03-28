@@ -102,6 +102,11 @@ SCAN_TARGETS=...,${v.cidr}
 }
 
 function applyCommandsSnippet(v: Vlan): string {
+  const ip = v.interface_ip ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".250");
+  const prefix = v.cidr.split("/")[1] ?? "24";
+  const routesBlock = v.gateway
+    ? `'routes': [{'to': '${v.cidr}', 'via': '${v.gateway}', 'metric': 100}],`
+    : "";
   return `# 1. Backup current netplan config
 sudo cp /etc/netplan/50-aeronet.yaml \\
   /etc/netplan/50-aeronet.yaml.bak.$(date +%Y%m%d%H%M%S)
@@ -109,8 +114,35 @@ sudo cp /etc/netplan/50-aeronet.yaml \\
 # 2. Verify backup was created
 ls -la /etc/netplan/
 
-# 3. Edit the netplan file and add the VLAN block shown in the Netplan tab
-sudo nano /etc/netplan/50-aeronet.yaml
+# 3. Append VLAN block to the vlans: section
+# This uses Python to safely insert the block at the right indentation
+sudo python3 << 'PYEOF'
+import yaml, sys
+
+with open('/etc/netplan/50-aeronet.yaml', 'r') as f:
+    content = f.read()
+
+# Check if VLAN already exists
+if 'INSIDE.${v.vlan_id}:' in content:
+    print("ERROR: INSIDE.${v.vlan_id} already exists in netplan config. Aborting.")
+    sys.exit(1)
+
+config = yaml.safe_load(content)
+if 'vlans' not in config['network']:
+    config['network']['vlans'] = {}
+
+config['network']['vlans']['INSIDE.${v.vlan_id}'] = {
+    'id': ${v.vlan_id},
+    'link': 'INSIDE',
+    'addresses': ['${ip}/${prefix}'],
+    ${routesBlock}
+}
+
+with open('/etc/netplan/50-aeronet.yaml', 'w') as f:
+    yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+print("OK: INSIDE.${v.vlan_id} added to netplan config.")
+PYEOF
 
 # 4. Validate before applying (dry run — safe, no changes applied)
 sudo netplan try --timeout 30
