@@ -173,7 +173,7 @@ def _extract_vendor_from_cpe(osmatch_list: list) -> str:
                 # cpe:/o:cisco:ios  or  cpe:/h:cisco:catalyst_3750
                 parts = cpe.split(":")
                 if len(parts) >= 4:
-                    return parts[3].replace("_", " ").title()
+                    return parts[2].replace("_", " ").title()
     return ""
 
 
