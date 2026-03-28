@@ -53,45 +53,15 @@ function parseIpMask(input: string): { ip: string; prefix: number; network: stri
   return { ip, prefix, network: `${network}/${prefix}` };
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+function nextIp(ip: string): string {
+  const parts = ip.split(".").map(Number);
+  parts[3] = Math.min(parts[3] + 1, 254);
+  return parts.join(".");
+}
+
 // ── Setup instructions generator ────────────────────────────────────────
-
-function netplanSnippet(v: Vlan): string {
-  const ip = v.interface_ip ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".250");
-  const prefix = v.cidr.split("/")[1] ?? "24";
-  const parent = v.interface.split(".")[0] || "INSIDE";
-  let block = `    ${v.interface}:
-      id: ${v.vlan_id}
-      link: ${parent}
-      addresses:
-        - ${ip}/${prefix}`;
-  if (v.gateway) {
-    block += `
-      routes:
-        - to: ${v.cidr}
-          via: ${v.gateway}
-          metric: 100`;
-  }
-  return block;
-}
-
-function dockerComposeSnippet(v: Vlan): string {
-  const enrIp = v.interface_ip ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".50");
-  return `# Add to networks: section in infra/docker-compose.yml
-  vlan${v.vlan_id}_monitor:
-    driver: macvlan
-    driver_opts:
-      parent: ${v.interface}
-    ipam:
-      config:
-        - subnet: ${v.cidr}
-          gateway: ${v.gateway ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".1")}
-
-# Add to enroller service networks:
-    networks:
-      aeronet-internal:
-      vlan${v.vlan_id}_monitor:
-        ipv4_address: ${enrIp}`;
-}
 
 function scanTargetsSnippet(v: Vlan): string {
   return `# In .env.secret, add this CIDR to SCAN_TARGETS:
@@ -104,30 +74,39 @@ SCAN_TARGETS=...,${v.cidr}
 function applyCommandsSnippet(v: Vlan): string {
   const ip = v.interface_ip ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".250");
   const prefix = v.cidr.split("/")[1] ?? "24";
+  const enrIp = v.interface_ip
+    ? nextIp(v.interface_ip)
+    : v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".254");
   const routesBlock = v.gateway
     ? `'routes': [{'to': '${v.cidr}', 'via': '${v.gateway}', 'metric': 100}],`
     : "";
-  return `# 1. Backup current netplan config
+  const gwIpamBlock = v.gateway
+    ? `'gateway': '${v.gateway}'`
+    : "";
+  const gwPingStep = v.gateway
+    ? `\n# 9. Test Layer 2 connectivity to gateway\ndocker exec infra-enroller-1 ping -c 3 ${v.gateway}`
+    : "";
+  return `# ⚠️  Run steps in order. Each step validates before proceeding.
+#    Backups are created automatically before any file is modified.
+#    If netplan validation fails, the original config is restored automatically.
+
+# 1. Backup current netplan config
 sudo cp /etc/netplan/50-aeronet.yaml \\
   /etc/netplan/50-aeronet.yaml.bak.$(date +%Y%m%d%H%M%S)
 
-# 2. Verify backup was created
-ls -la /etc/netplan/
-
-# 3. Append VLAN block to the vlans: section
-# This uses Python to safely insert the block at the right indentation
+# 2. Add VLAN block to netplan using Python
 sudo python3 << 'PYEOF'
 import yaml, sys
 
-with open('/etc/netplan/50-aeronet.yaml', 'r') as f:
-    content = f.read()
+NETPLAN_PATH = '/etc/netplan/50-aeronet.yaml'
 
-# Check if VLAN already exists
-if 'INSIDE.${v.vlan_id}:' in content:
-    print("ERROR: INSIDE.${v.vlan_id} already exists in netplan config. Aborting.")
+with open(NETPLAN_PATH, 'r') as f:
+    config = yaml.safe_load(f)
+
+if 'INSIDE.${v.vlan_id}' in config.get('network', {}).get('vlans', {}):
+    print("ERROR: INSIDE.${v.vlan_id} already exists. Aborting.")
     sys.exit(1)
 
-config = yaml.safe_load(content)
 if 'vlans' not in config['network']:
     config['network']['vlans'] = {}
 
@@ -138,28 +117,90 @@ config['network']['vlans']['INSIDE.${v.vlan_id}'] = {
     ${routesBlock}
 }
 
-with open('/etc/netplan/50-aeronet.yaml', 'w') as f:
+import shutil, datetime
+ts = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+shutil.copy(NETPLAN_PATH, f"{NETPLAN_PATH}.bak.{ts}")
+
+with open(NETPLAN_PATH, 'w') as f:
     yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
 
 print("OK: INSIDE.${v.vlan_id} added to netplan config.")
 PYEOF
 
-# 4. Validate before applying (dry run — safe, no changes applied)
+# 3. Validate before applying (dry run — auto-reverts on failure)
 sudo netplan try --timeout 30
 
-# 5. Apply if validation passes
-sudo netplan apply
+# 4. Apply only if validation passed
+if [ $? -eq 0 ]; then
+    sudo netplan apply
+    echo "OK: netplan applied, INSIDE.${v.vlan_id} active."
+else
+    echo "ERROR: netplan validation failed. Restoring backup."
+    sudo cp /etc/netplan/50-aeronet.yaml.bak.* \\
+      /etc/netplan/50-aeronet.yaml
+    sudo netplan apply
+    echo "RESTORED: original config reapplied."
+fi
 
-# 6. Verify interface is up
+# 5. Verify interface is up
 ip addr show ${v.interface}
 
-# 7. Restart enroller with new macvlan network
-cd /opt/aeronet-os
-docker compose -f infra/docker-compose.yml up -d enroller
+# 6. Add macvlan network to docker-compose.yml using Python
+python3 << 'PYEOF'
+import yaml, sys, shutil, datetime
 
-# 8. Verify connectivity
-docker compose -f infra/docker-compose.yml exec enroller \\
-  ping -c 3 ${v.gateway ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".1")}`;
+COMPOSE_PATH = '/opt/aeronet-os/infra/docker-compose.yml'
+
+with open(COMPOSE_PATH, 'r') as f:
+    config = yaml.safe_load(f)
+
+network_key = 'vlan${v.vlan_id}_monitor'
+
+if network_key in config.get('networks', {}):
+    print(f"INFO: {network_key} already exists in networks. Skipping.")
+else:
+    config.setdefault('networks', {})[network_key] = {
+        'driver': 'macvlan',
+        'driver_opts': {'parent': 'INSIDE.${v.vlan_id}'},
+        'ipam': {
+            'config': [{
+                'subnet': '${v.cidr}',
+                ${gwIpamBlock}
+            }]
+        }
+    }
+    print(f"OK: {network_key} added to networks section.")
+
+enroller = config.get('services', {}).get('enroller', {})
+svc_networks = enroller.get('networks', {})
+
+if isinstance(svc_networks, dict):
+    if network_key not in svc_networks:
+        svc_networks[network_key] = {
+            'ipv4_address': '${enrIp}'
+        }
+        print(f"OK: {network_key} added to enroller service.")
+    else:
+        print(f"INFO: {network_key} already in enroller service. Skipping.")
+elif isinstance(svc_networks, list):
+    if network_key not in svc_networks:
+        svc_networks.append(network_key)
+        print(f"OK: {network_key} added to enroller service.")
+
+ts = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+shutil.copy(COMPOSE_PATH, f"{COMPOSE_PATH}.bak.{ts}")
+with open(COMPOSE_PATH, 'w') as f:
+    yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+print("OK: docker-compose.yml updated and backed up.")
+PYEOF
+
+# 7. Restart enroller to attach to new macvlan network
+cd /opt/aeronet-os
+docker compose -f infra/docker-compose.yml --env-file .env.secret up -d enroller
+
+# 8. Verify enroller has the new interface IP
+docker exec infra-enroller-1 hostname -I${gwPingStep}`;
 }
 
 // ── Copy button ─────────────────────────────────────────────────────────
@@ -186,7 +227,7 @@ function CopyButton({ text }: { text: string }) {
 
 // ── Instructions modal ──────────────────────────────────────────────────
 
-const TABS = ["Netplan", "Docker Compose", "SCAN_TARGETS", "Apply Commands"] as const;
+const TABS = ["Apply Commands", "SCAN_TARGETS"] as const;
 type TabKey = (typeof TABS)[number];
 
 function InstructionsModal({
@@ -196,24 +237,16 @@ function InstructionsModal({
   vlan: Vlan;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<TabKey>("Netplan");
+  const [tab, setTab] = useState<TabKey>("Apply Commands");
 
   const snippets: Record<TabKey, { header: string; code: string }> = {
-    Netplan: {
-      header: "Add this block under the vlans: section in /etc/netplan/50-aeronet.yaml:",
-      code: netplanSnippet(vlan),
-    },
-    "Docker Compose": {
-      header: "Add these blocks to infra/docker-compose.yml:",
-      code: dockerComposeSnippet(vlan),
+    "Apply Commands": {
+      header: "Run this script on the Virgilio host to configure netplan + docker-compose:",
+      code: applyCommandsSnippet(vlan),
     },
     SCAN_TARGETS: {
       header: "Update scan targets (optional if using DB-driven scanning):",
       code: scanTargetsSnippet(vlan),
-    },
-    "Apply Commands": {
-      header: "Run these commands on the Virgilio host to activate:",
-      code: applyCommandsSnippet(vlan),
     },
   };
 
