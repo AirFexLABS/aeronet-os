@@ -1,0 +1,10 @@
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: AeroNet Notifier
+    receivers:
+      - uid: aeronet-notifier-webhook
+        type: webhook
+        settings:
+          url: http://notifier:8001/alert/grafana
+          httpMethod: POST
