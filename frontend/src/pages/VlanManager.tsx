@@ -58,19 +58,20 @@ function parseIpMask(input: string): { ip: string; prefix: number; network: stri
 function netplanSnippet(v: Vlan): string {
   const ip = v.interface_ip ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".250");
   const prefix = v.cidr.split("/")[1] ?? "24";
-  return `# /etc/netplan/60-vlan${v.vlan_id}-${v.name}.yaml
-network:
-  version: 2
-  vlans:
-    ${v.interface}:
+  const parent = v.interface.split(".")[0] || "INSIDE";
+  let block = `    ${v.interface}:
       id: ${v.vlan_id}
-      link: INSIDE
+      link: ${parent}
       addresses:
-        - ${ip}/${prefix}
+        - ${ip}/${prefix}`;
+  if (v.gateway) {
+    block += `
       routes:
         - to: ${v.cidr}
-          via: ${v.gateway ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".1")}
+          via: ${v.gateway}
           metric: 100`;
+  }
+  return block;
 }
 
 function dockerComposeSnippet(v: Vlan): string {
@@ -101,15 +102,30 @@ SCAN_TARGETS=...,${v.cidr}
 }
 
 function applyCommandsSnippet(v: Vlan): string {
-  return `# 1. Apply netplan
+  return `# 1. Backup current netplan config
+sudo cp /etc/netplan/50-aeronet.yaml \\
+  /etc/netplan/50-aeronet.yaml.bak.$(date +%Y%m%d%H%M%S)
+
+# 2. Verify backup was created
+ls -la /etc/netplan/
+
+# 3. Edit the netplan file and add the VLAN block shown in the Netplan tab
+sudo nano /etc/netplan/50-aeronet.yaml
+
+# 4. Validate before applying (dry run — safe, no changes applied)
+sudo netplan try --timeout 30
+
+# 5. Apply if validation passes
 sudo netplan apply
+
+# 6. Verify interface is up
 ip addr show ${v.interface}
 
-# 2. Restart enroller with new macvlan network
+# 7. Restart enroller with new macvlan network
 cd /opt/aeronet-os
 docker compose -f infra/docker-compose.yml up -d enroller
 
-# 3. Verify connectivity
+# 8. Verify connectivity
 docker compose -f infra/docker-compose.yml exec enroller \\
   ping -c 3 ${v.gateway ?? v.cidr.replace(/\/\d+$/, "").replace(/\.\d+$/, ".1")}`;
 }
@@ -152,7 +168,7 @@ function InstructionsModal({
 
   const snippets: Record<TabKey, { header: string; code: string }> = {
     Netplan: {
-      header: "Create this file on the Virgilio host:",
+      header: "Add this block under the vlans: section in /etc/netplan/50-aeronet.yaml:",
       code: netplanSnippet(vlan),
     },
     "Docker Compose": {

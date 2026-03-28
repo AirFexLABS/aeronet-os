@@ -34,15 +34,30 @@ Log in as an operator or admin. Navigate to VLAN management and create:
 
 This writes a row to the `vlans` table. No network changes happen yet.
 
-### Step 2 -- Generate netplan snippet
+### Step 2 -- Backup and amend netplan config
 
-Create the netplan configuration on the Virgilio host:
+All VLAN sub-interfaces live in the single `/etc/netplan/50-aeronet.yaml`
+file that was created during initial deployment.  **Never create separate
+per-VLAN netplan files** -- Netplan merges all YAML files in `/etc/netplan/`
+and conflicting keys across files cause silent failures.
+
+First, back up the current config:
 
 ```bash
-sudo tee /etc/netplan/60-vlan10-terminal-ops.yaml << 'EOF'
-network:
-  version: 2
-  vlans:
+sudo cp /etc/netplan/50-aeronet.yaml \
+  /etc/netplan/50-aeronet.yaml.bak.$(date +%Y%m%d%H%M%S)
+```
+
+Then open the file and add the new VLAN block under the existing `vlans:`
+section:
+
+```bash
+sudo nano /etc/netplan/50-aeronet.yaml
+```
+
+Add this block (indented under `vlans:`):
+
+```yaml
     INSIDE.10:
       id: 10
       link: INSIDE
@@ -52,16 +67,28 @@ network:
         - to: 10.10.10.0/24
           via: 10.10.10.1
           metric: 100
-EOF
 ```
 
 **Naming convention:**
 
-- File: `60-vlan{id}-{name}.yaml`
-- Interface: `INSIDE.{vlan_id}` (matches the trunk interface name)
+- Interface: `INSIDE.{vlan_id}` -- `INSIDE` is the logical trunk interface
+  name used consistently across all AeroNet deployments, regardless of the
+  physical NIC name (e.g. `enp2s0f1`).  The trunk is always aliased to
+  `INSIDE` in the base netplan config so that VLAN sub-interfaces
+  (`INSIDE.4`, `INSIDE.10`, etc.) remain portable across hardware.
 - Host IP: `.250` from the top of the range to avoid DHCP conflicts
+- Routes: only required when a gateway is specified; omit the `routes:`
+  block for isolated/unrouted segments
 
 ### Step 3 -- Apply netplan on Virgilio
+
+Validate the config first with a dry run (auto-reverts after timeout):
+
+```bash
+sudo netplan try --timeout 30
+```
+
+If the dry run succeeds, apply permanently:
 
 ```bash
 sudo netplan apply
@@ -145,16 +172,17 @@ Return to VLAN management in the UI and change VLAN 10's status from
 
 ## Netplan Template
 
+All VLAN sub-interfaces are appended to the single `50-aeronet.yaml` file.
+The `link` field always references `INSIDE` -- the logical trunk alias.
+
 ```yaml
-# /etc/netplan/60-vlan{ID}-{NAME}.yaml
-network:
-  version: 2
-  vlans:
+# Add under the vlans: section in /etc/netplan/50-aeronet.yaml
     INSIDE.{ID}:
       id: {ID}
       link: INSIDE
       addresses:
         - {HOST_IP}/{PREFIX}
+      # Include routes only when a gateway is configured:
       routes:
         - to: {CIDR}
           via: {GATEWAY}
@@ -216,10 +244,10 @@ Each new VLAN expands the enroller's network attack surface. Before adding:
 4. **Review the macvlan IP assignment** -- ensure the enroller's static IP
    does not conflict with existing devices or DHCP ranges on the VLAN.
 
-5. **Update the audit rules** if the new netplan file should be monitored:
+5. **Verify the audit rule** covers the main netplan config file:
 
    ```bash
-   sudo auditctl -w /etc/netplan/60-vlan10-terminal-ops.yaml -p wa -k netplan-changes
+   sudo auditctl -w /etc/netplan/50-aeronet.yaml -p wa -k netplan-changes
    ```
 
 6. **Do not add management VLANs** (switch management, out-of-band) to
@@ -231,10 +259,15 @@ Each new VLAN expands the enroller's network attack surface. Before adding:
 If a VLAN configuration causes issues (network unreachable, container crash,
 scan failures):
 
-### 1. Remove the netplan config
+### 1. Restore the netplan backup
 
 ```bash
-sudo rm /etc/netplan/60-vlan10-terminal-ops.yaml
+# Find the most recent backup
+ls -lt /etc/netplan/50-aeronet.yaml.bak.*
+
+# Restore it
+sudo cp /etc/netplan/50-aeronet.yaml.bak.<TIMESTAMP> \
+  /etc/netplan/50-aeronet.yaml
 sudo netplan apply
 ```
 
